@@ -34,6 +34,28 @@ Cursor are built from their docs and not tested end to end yet.
 7. New sessions are remembered from now on. Sessions already running are not; they come
    back by themselves only after they are restarted once.
 
+## Updating it (for the agent doing it)
+
+The dialog offers *Update the Revive mod from github.com/dmazlum/herdr-revive to its
+latest release* when a newer release is out. To do it:
+
+1. Find the installed copy: the folder under `~/.config/herdr-app/mods/` whose `mod.json`
+   has `"title": "Revive"` (normally `revive`; a different name if it was renamed because
+   of a clash, and then keep that name). Its `"version"` is the one installed.
+2. Take the latest release's tag from
+   `https://github.com/dmazlum/herdr-revive/releases/latest`, read its notes and every
+   file of `mods/revive` at that tag.
+3. Replace the installed folder with that `mods/revive`, in place: delete it and copy
+   the new one under the same name. Don't add the mod again: an agent never overwrites a
+   mod, so it would add a second copy under a new name.
+4. Run `herdr-app check` on the folder. It must pass.
+5. If the release notes say `keys.json` changed, merge it again (ask first if a key is
+   already bound).
+6. Run `node ~/.config/herdr-app/mods/<folder>/revive.mjs doctor`. If an agent shows
+   `false` (a release added an agent the person has), tell them what `install` would
+   change and ask before running it, as in step 5 of *Installing it*. The hooks and shell block of an
+   earlier install point at the same folder, so they keep working without it.
+
 ## What you see
 
 - **Dialog** (`mod.open:revive`, 620px wide, as tall as its content, on `popover`, 20px
@@ -41,6 +63,11 @@ Cursor are built from their docs and not tested end to end yet.
   would pass 85% of the window; the header, the note and the footer always show.
   - A header: **↻ Revive** (16px semibold) and *Agent sessions, remembered on their
     terminals* in `dim`.
+  - When a newer release is out: a `raised` card with a `border` (10px radius, 12px
+    padding): **Revive v0.6.0 is out** (13px semibold), *you have v0.5.2* in `dim`, a
+    `dim` *Stop checking* link on the right, *To update, ask your agent:* and the prompt
+    in an 11px mono box on `background`. Buttons: **Later** (ghost), **What changed**
+    (outline, opens the release page) and a solid **Copy prompt**. See *Update check*.
   - Sections titled in 10.5px medium `dim` capitals:
     - **FOCUSED TERMINAL**: a `raised` card with a `border`, 12px radius, 14px padding. The
       agent's name (14px semibold), the first 8 characters of the session id in JetBrains
@@ -90,6 +117,7 @@ Cursor are built from their docs and not tested end to end yet.
 | --- | --- |
 | `mods/revive/main.js` | The dialog |
 | `mods/revive/lib/core.js` | Agents (the `AGENTS` table), flags, hook payloads, labels, states and the resume script: plain functions shared by the dialog and the engine |
+| `mods/revive/lib/update.js` | Dialog only: the installed `VERSION` and the daily check for a newer release |
 | `mods/revive/lib/sessions.js` | Engine only: finding a running agent's session from the files it writes, for one nobody recorded |
 | `mods/revive/revive.mjs` | The engine, run with the person's Node: hooks, the shell check, list, resume, install |
 | `mods/revive/lib/extension.js` | Extensions only: what pi's and omp's extensions share (running `revive.mjs hook` one at a time, the SIGTERM/SIGHUP listener) |
@@ -316,6 +344,29 @@ reboot with either agent.
   `.bashrc`) is taken out when bash's is written. A file without Revive in it is never
   rewritten by install or uninstall.
 - Hooks never fail an agent: every error is swallowed and the exit code is 0.
+
+## Update check
+
+- Only the dialog checks, when it opens, and at most once a day: one GET to
+  `https://api.github.com/repos/dmazlum/herdr-revive/releases/latest`, with no token and
+  nothing about the person, their sessions or their folders. The engine and the hooks
+  never touch the network.
+- The result is kept in Herdr's shared state under `revive.update` (`checked`, `latest:
+  {tag, url}`, `dismissed`, `off`, `repo`), so it lasts across restarts and every copy of
+  the dialog sees it. The time is saved before asking, so two dialogs don't both ask. A
+  result saved for another repository counts as never checked; `off` holds for any.
+- A release is offered when its tag (`v1.2.3`) is newer than `VERSION` in
+  `lib/update.js`, which must equal `package.json`'s and `mod.json`'s version (a test
+  checks it). A tag of another shape offers nothing until the next day's check; a
+  failed request or no network offers nothing and is tried again an hour later. A saved
+  check time in the future (a clock that was wrong) counts as long ago.
+- **What changed** opens the release's page only if it is on
+  `https://github.com/dmazlum/herdr-revive/`; otherwise the releases page.
+- **Later** hides that release until a newer one; **Stop checking** sets `off` for
+  good. `CHECK = false` in `lib/update.js` turns it off before it ever asks (an update
+  puts it back).
+- A release bumps the version in `package.json`, `mods/revive/mod.json` and
+  `mods/revive/lib/update.js`, and is tagged `v<version>`.
 
 ## Settings
 
