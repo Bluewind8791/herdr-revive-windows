@@ -208,18 +208,29 @@ node ~/.config/herdr-app/mods/revive/revive.mjs doctor                 # what is
 
 ## Updates
 
-Herdr updates its own mods, not ones you added: yours is a copy, and nothing tells you
-when this repo changes. To hear about a new version, watch the repo for releases (on
-GitHub: **Watch → Custom → Releases**). Each
-[release](https://github.com/dmazlum/herdr-revive/releases) says what changed and whether
-`keys.json` did; merge it again when it did.
+Herdr updates its own mods, not ones you added: yours is a copy. So the Revive dialog
+checks for you: at most once a day, while it is open, it asks GitHub's public releases
+API for the latest release (no token, nothing about you or your sessions). When a newer
+one is out, a card at the top says so, links to **What changed**, and gives you the
+prompt to hand your agent:
 
-The version you have is `"version"` in `~/.config/herdr-app/mods/revive/mod.json`. To
-update, ask your agent to replace that folder with the latest `mods/revive` from
-`github.com/dmazlum/herdr-revive`. Adding it again isn't enough: an agent never
-overwrites a mod, it would add a second copy under a new name. If the mod was renamed when
-it was added (a name clash), the renamed folder is the one to replace, renamed the same way.
-Or by hand:
+> Update the Revive mod from github.com/dmazlum/herdr-revive to its latest release
+
+**Copy prompt** puts it on your clipboard. The agent follows
+[RECIPE.md](RECIPE.md#updating-it-for-the-agent-doing-it): it replaces the installed
+folder in place (adding the mod again isn't enough, an agent never overwrites a mod and
+would add a second copy under a new name), merges `keys.json` again if the release
+changed it, and runs `doctor`. **Later** hides that release until the next one; **Stop
+checking** turns the check off for good, as does `CHECK = false` in
+`mods/revive/lib/update.js` (an update puts it back).
+
+The version you have is `"version"` in `~/.config/herdr-app/mods/revive/mod.json`. You
+can also watch the repo for releases (on GitHub: **Watch → Custom → Releases**). Each
+[release](https://github.com/dmazlum/herdr-revive/releases) says what changed and whether
+`keys.json` did.
+
+To update without an agent, replace the folder yourself. If the mod was renamed when it
+was added (a name clash), use that folder's name in place of `revive` below:
 
 ```sh
 git -C herdr-revive pull          # or clone it again

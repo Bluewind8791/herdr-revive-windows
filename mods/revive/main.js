@@ -8,8 +8,9 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, run, theme, focused, appHome, home, props, closeOverlay, notify } from "herdr";
+import { exec, run, theme, focused, appHome, home, props, closeOverlay, notify, shared, setShared } from "herdr";
 import { AGENTS, canFork, command, shortId, ago, shJoin, unresumable, needsCommand } from "./lib/core.js";
+import { updater, VERSION, PROMPT, RELEASES } from "./lib/update.js";
 
 /**
  * Why a running session can't be forked from here, or null. A fork opens a new
@@ -24,20 +25,22 @@ const ENGINE = () => `${appHome()}/mods/revive/revive.mjs`;
 const REFRESH_MS = 4000;
 // The dialog grows with its content up to this share of the window; past it, the sessions scroll.
 const MAX_SHARE = 0.85;
-// Room kept for the padding, the header and the footer; a note takes NOTE_H more.
+// Room kept for the padding, the header and the footer; a note takes NOTE_H
+// more, the new-release card UPDATE_H.
 const CHROME_H = 130;
 const NOTE_H = 56;
+const UPDATE_H = 165;
 
 /**
  * The tallest the sessions may be, in pixels, so the whole dialog fits the
  * window, or null when the window's size isn't known. A dialog sized by its
  * content can't shrink a part of itself, so the part gets a height of its own.
  */
-function listMaxH(withNote) {
+function listMaxH(extra) {
   let height = null;
   try { height = window.viewport_size()?.height; } catch { /* no window yet */ }
   if (!Number.isFinite(height) || height <= 0) return null;
-  return Math.max(160, Math.floor(height * MAX_SHARE) - CHROME_H - (withNote ? NOTE_H : 0));
+  return Math.max(160, Math.floor(height * MAX_SHARE) - CHROME_H - extra);
 }
 
 /** A folder the way a shell prompt shows it: the home folder as `~`. */
@@ -103,6 +106,8 @@ export default class Revive extends View {
     cx.timer.after(120, () => this.handle.focus());
     this.load(cx, { setup: true });
     cx.timer.every(REFRESH_MS, (cx) => this.load(cx));
+    this.update = updater({ shared, setShared, fetch });
+    cx.spawn(async (cx) => { await this.update.check(); cx.notify(); });
   }
 
   /**
@@ -293,6 +298,31 @@ export default class Revive extends View {
       .when(needs, (el) => el.child(button(t, `resume-${i}`, "Resume", (_e, cx) => this.resume(entry, cx), { kind: "solid", disabled: this.busy || Boolean(unresumable(rec)) })));
   }
 
+  /**
+   * A newer release, when there is one: what to ask the agent, since an added
+   * mod can't update itself (see lib/update.js).
+   */
+  updateCard(t, latest) {
+    return v_flex().flex_none().mt(14).gap(10).p(12).rounded(10).bg(t.raised).border_1().border_color(t.border)
+      .child(h_flex().gap(8).items_center()
+        .child(div().text_size(13).font_semibold().text_color(t.foreground).child(`Revive ${latest.tag} is out`))
+        .child(div().text_size(11.5).text_color(t.dim).child(`you have v${VERSION}`))
+        .child(div().flex_1())
+        .child(div().id("update-stop").text_size(11).text_color(t.dim).cursor_pointer().hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => { this.update.stop(); cx.notify(); }).child("Stop checking")))
+      .child(div().text_size(12).text_color(t.muted).child("To update, ask your agent:"))
+      .child(div().px(10).py(6).rounded(6).bg(t.background).border_1().border_color(t.border)
+        .font_family("JetBrains Mono").text_size(11).text_color(t.foreground).child(PROMPT))
+      .child(h_flex().gap(6)
+        .child(div().flex_1())
+        .child(button(t, "update-later", "Later", (_e, cx) => { this.update.dismiss(latest.tag); cx.notify(); }, { kind: "ghost" }))
+        .child(button(t, "update-notes", "What changed", (_e, cx) => cx.open_url(latest.url ?? RELEASES)))
+        .child(button(t, "update-copy", "Copy prompt", (_e, cx) => {
+          cx.write_to_clipboard(PROMPT);
+          notify({ title: "Copied", body: PROMPT, level: "success", timeout: 2500 });
+        }, { kind: "solid" })));
+  }
+
   setupLine(t) {
     const s = this.setup;
     if (!s) return div();
@@ -316,12 +346,14 @@ export default class Revive extends View {
     const others = this.entries.filter((e) => e.rec && e.address !== this.focus);
     const needs = others.filter((e) => NEEDS_YOU.has(e.state));
     const rest = others.filter((e) => !NEEDS_YOU.has(e.state));
-    const listH = listMaxH(Boolean(this.note));
+    const latest = this.update?.available() ?? null;
+    const listH = listMaxH((this.note ? NOTE_H : 0) + (latest ? UPDATE_H : 0));
     return v_flex().id("revive").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .w_full().bg(t.popover).px(20).pt(18).pb(16)
       .child(h_flex().flex_none().items_center().gap(8)
         .child(div().text_size(16).font_semibold().text_color(t.foreground).child("↻ Revive"))
         .child(div().text_size(11.5).text_color(t.dim).child("Agent sessions, remembered on their terminals")))
+      .when(Boolean(latest), (el) => el.child(this.updateCard(t, latest)))
       .child(div().id("revive-scroll").when(listH !== null, (el) => el.max_h(listH)).overflow_y_scrollbar()
         .child(heading(t, "FOCUSED TERMINAL"))
         .child(this.focusedCard(t))
