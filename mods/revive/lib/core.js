@@ -570,6 +570,24 @@ export function shQuote(word) {
 
 export const shJoin = (argv) => argv.map(shQuote).join(" ");
 
+/**
+ * How the shell's notes are drawn: ANSI's own colors, so they follow the
+ * terminal's theme. `accent` (bold blue) names Revive, `warn` (bold yellow)
+ * when it won't resume, `caution` (yellow) for what an automatic resume left
+ * out, `strong` for the agent, `dim` for what's said only in passing.
+ */
+const SGR = { accent: "\\033[1;34m", warn: "\\033[1;33m", caution: "\\033[33m", strong: "\\033[1m", dim: "\\033[2m" };
+
+/**
+ * A `printf` command that prints one line of styled parts, each `[style, text]`
+ * (style null for plain). The texts go in as quoted arguments, never in the
+ * format, so a `%` or a quote in them prints as it is.
+ */
+export function printfLine(parts) {
+  const format = parts.map(([style]) => (style ? `${SGR[style]}%s\\033[0m` : "%s")).join("");
+  return `printf '${format}\\n' ${parts.map(([, text]) => shQuote(text)).join(" ")}`;
+}
+
 const num = (v) => (v === undefined || v === "" || v === null ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 
 /**
@@ -713,10 +731,17 @@ export function resumeScript(rec, engine) {
   if (!line) return "";
   const name = AGENTS[rec.agent].name;
   const { dropped } = attendedFlags(rec.agent, safeFlags(rec.agent, rec.flags ?? []));
-  const without = dropped.length ? ` without ${dropped.join(", ")} (quit and resume it from the Revive dialog to keep ${dropped.length > 1 ? "them" : "it"})` : "";
-  const note = `↻ Revive: resuming ${name} session ${shortId(rec.session)}${without}. REVIVE_AUTO=0 skips this.`;
+  // `↻ Revive  resuming Claude Code session 9e458eb4 · REVIVE_AUTO=0 skips this`,
+  // and under it, in yellow, any flag an automatic resume left out.
+  const notes = [printfLine([
+    ["accent", "↻ Revive"], [null, "  resuming "], ["strong", name], [null, ` session ${shortId(rec.session)}`],
+    ["dim", " · REVIVE_AUTO=0 skips this"],
+  ])];
+  if (dropped.length) {
+    notes.push(printfLine([["caution", `  without ${dropped.join(", ")} (quit and resume it from the Revive dialog to keep ${dropped.length > 1 ? "them" : "it"})`]]));
+  }
   const body = [
-    `  printf '\\033[2m%s\\033[0m\\n' ${shQuote(note)}`,
+    ...notes.map((n) => `  ${n}`),
     `  __revive_t=$SECONDS`,
     `  ${line}`,
     `  if [ $? -ne 0 ] && [ $((SECONDS - __revive_t)) -lt 15 ]; then node ${shQuote(engine)} failed; fi`,

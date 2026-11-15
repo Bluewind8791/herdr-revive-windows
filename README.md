@@ -95,7 +95,8 @@ unrestricted after a reboot, with nobody watching. So the resumed pane says what
 out:
 
 ```
-↻ Revive: resuming Claude Code session 9e458eb4 without --dangerously-skip-permissions (quit and resume it from the Revive dialog to keep it). REVIVE_AUTO=0 skips this.
+↻ Revive  resuming Claude Code session 9e458eb4 · REVIVE_AUTO=0 skips this
+  without --dangerously-skip-permissions (quit and resume it from the Revive dialog to keep it)
 ```
 
 Quit the agent and resume it from the dialog to get them back.

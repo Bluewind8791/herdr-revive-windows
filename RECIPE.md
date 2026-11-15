@@ -137,11 +137,13 @@ latest release* when a newer release is out. To do it:
     `raised` with a `border`, 8px radius, 32px tall (28px small), the key in a 10px mono
     chip.
 - The list refreshes every 4 seconds while the dialog is open.
-- In a resumed pane, before the agent starts: `↻ Revive: resuming Claude Code session
-  9e458eb4. REVIVE_AUTO=0 skips this.` in dim text. When flags that lift approvals or the
-  sandbox were left out: `↻ Revive: resuming Claude Code session 9e458eb4 without
-  --dangerously-skip-permissions (quit and resume it from the Revive dialog to keep it).
-  REVIVE_AUTO=0 skips this.`
+- In a resumed pane, before the agent starts, one line in ANSI's own colors (so it follows
+  the terminal's theme): `↻ Revive` in bold blue, `  resuming `, the agent's name in
+  bold, ` session 9e458eb4`, and ` · REVIVE_AUTO=0 skips this` dim. When flags that lift
+  approvals or the sandbox were left out, a second line in yellow: `  without
+  --dangerously-skip-permissions (quit and resume it from the Revive dialog to keep it)`.
+  Both are `printfLine` (`lib/core.js`): the texts are `printf` arguments, never its
+  format.
 
 ## The files
 
@@ -336,9 +338,9 @@ reboot with either agent.
   (for Claude Code, pi and omp) the session's transcript exists. Without a transcript the
   record is dropped. A failed resume is not retried at every restart; **Resume** in the
   dialog still tries it.
-- When only the folder or an unmet need stops it, `check` says so once, in dim text
-  (`↻ Revive: not resuming Claude Code session 9e458eb4: it was started with
-  CLAUDE_CONFIG_DIR. Resume it by hand (Revive dialog).`), and marks the terminal
+- When only the folder or an unmet need stops it, `check` says so once (`↻ Revive` in
+  bold yellow, then `  not resuming Claude Code session 9e458eb4: it was started with
+  CLAUDE_CONFIG_DIR.` and, dim, ` Resume it by hand from the Revive dialog.`), and marks the terminal
   `revive.failed`, so the next shell stays quiet.
 - **Resume** in the dialog refuses a record whose folder failed the check, and names the
   folder (*Won't resume: its folder ~/w is missing, not yours, or writable by others.*).

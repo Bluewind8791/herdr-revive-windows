@@ -6,8 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AGENTS, agentKey, needsOf, carriedFlags, isOneShot, validId, command, shQuote, shJoin, readRecord, labelArgs, clearArgs,
-  stateOf, shouldResume, ownShell, isShell, resumeScript, attendedFlags, ago,
+  stateOf, shouldResume, ownShell, isShell, resumeScript, attendedFlags, ago, printfLine,
 } from "../mods/revive/lib/core.js";
+
+/** What a terminal shows: the text without its colors. */
+const plain = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
 const ID = "9e458eb4-72c3-41c2-88bf-2f7f79f3716f";
 const labels = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [`revive.${k}`, String(v)]));
@@ -227,7 +230,8 @@ test("the resume script runs the agent in its folder and reports a quick failure
   // No terminal to hand over: everything runs on the shell's own output.
   const env = { ...process.env, PATH: `${dir}:${process.env.PATH}`, REVIVE_TTY: join(dir, "missing", "tty") };
   const out = execFileSync("bash", ["-c", script], { encoding: "utf8", env });
-  assert.match(out, /Revive: resuming Claude Code session 9e458eb4/);
+  assert.match(plain(out), /↻ Revive {2}resuming Claude Code session 9e458eb4 · REVIVE_AUTO=0 skips this/);
+  assert.match(out, /\x1b\[1;34m↻ Revive\x1b\[0m/, "Revive in bold blue");
   assert.equal(readFileSync(join(dir, "where"), "utf8").trim(), execFileSync("sh", ["-c", `cd "${work}" && pwd -P`], { encoding: "utf8" }).trim());
   assert.deepEqual(readFileSync(join(dir, "argv"), "utf8").trim().split("\n"), ["--model", "opus", "--resume", ID]);
   assert.equal(readFileSync(join(dir, "node"), "utf8").trim(), "failed");
@@ -245,7 +249,7 @@ test("the agent is handed the terminal, even when the shell's output is held", (
   const out = execFileSync("sh", ["-c", script], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, REVIVE_TTY: tty } });
   assert.equal(out, "", "nothing on the held output");
   const seen = readFileSync(tty, "utf8");
-  assert.match(seen, /Revive: resuming/);
+  assert.match(plain(seen), /↻ Revive {2}resuming/);
   assert.match(seen, /agent ran/);
 });
 
@@ -304,7 +308,8 @@ test("an automatic resume leaves out the flags that lift approvals or the sandbo
     assert.deepEqual(command(r, "resume", { unattended: true }), AGENTS[agent].resume(ID, kept), `${agent}: left out`);
   }
   const script = resumeScript(rec("claude", ["--dangerously-skip-permissions", "--permission-mode", "bypassPermissions"]), "/e");
-  assert.match(script, /resuming Claude Code session 9e458eb4 without --dangerously-skip-permissions, --permission-mode bypassPermissions \(quit and resume it from the Revive dialog to keep them\)/);
+  // Its own line, in yellow, under the note.
+  assert.match(script, /\\033\[33m%s\\033\[0m\\n' ' {2}without --dangerously-skip-permissions, --permission-mode bypassPermissions \(quit and resume it from the Revive dialog to keep them\)'/);
   assert.match(script, /claude --resume 9e458eb4/);
   assert.doesNotMatch(resumeScript(rec("claude", ["--model", "opus"]), "/e"), /without/);
 });
@@ -348,4 +353,12 @@ test("a shell is the terminal's own when it is its program, or a wrapper's child
 test("shells are recognized by name, login or not", () => {
   for (const argv of [["zsh"], ["-zsh"], ["/bin/bash", "--login"], ["/usr/local/bin/fish"], ["sh", "-c", "x"]]) assert.equal(isShell(argv), true, argv[0]);
   for (const argv of [["script"], ["node", "x"], ["claude"], [], undefined]) assert.equal(isShell(argv), false, String(argv?.[0]));
+});
+
+test("the shell's notes use ANSI's own colors, and their text never reaches the format", () => {
+  const line = printfLine([["accent", "↻ Revive"], [null, " 100% done, it's fine"], ["dim", " hint"]]);
+  // The texts are arguments: a % or a quote in them prints as it is.
+  assert.match(line, /^printf '\\033\[1;34m%s\\033\[0m%s\\033\[2m%s\\033\[0m\\n' /);
+  const out = execFileSync("sh", ["-c", line], { encoding: "utf8" });
+  assert.equal(out, "\x1b[1;34m↻ Revive\x1b[0m 100% done, it's fine\x1b[2m hint\x1b[0m\n");
 });
