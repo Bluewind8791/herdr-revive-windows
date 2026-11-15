@@ -26,8 +26,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
-  AGENTS, agentKey, carriedFlags, hookOwner, hookPayload, endAction, isOneShot, readRecord, labelArgs, clearArgs, resumedArgs,
-  stateOf, shouldResume, ownShell, resumeScript, resumeLine, shQuote, validId, needsOf, shortId, needsHint, unresumable,
+  AGENTS, agentKey, carriedFlags, safeFlags, hookOwner, hookPayload, endAction, isOneShot, readRecord, labelArgs, clearArgs, resumedArgs,
+  stateOf, shouldResume, ownShell, promptShell, idleWrappedShell, resumeScript, resumeLine, shQuote, validId, needsOf, shortId, needsHint, unresumable,
   printfLine,
 } from "./lib/core.js";
 import { agentDirs, findSession } from "./lib/sessions.js";
@@ -79,12 +79,13 @@ async function listTerminals() {
  * The agent in the terminal's foreground, or null. By its command line, or,
  * for an agent behind a wrapper with another name (`node …/cli.mjs`), by its
  * own report, which only counts while something other than the terminal's
- * shell is in the foreground: a report outlives the agent that sent it.
+ * shell is in the foreground: a report outlives the agent that sent it. A
+ * shell at its own prompt ignores the report; one running a script keeps it.
  */
 function liveAgent(t) {
   const fg = t.foreground;
   if (!fg?.argv) return null;
-  return agentKey(null, fg.argv) ?? (fg.pid && fg.pid !== t.pid ? agentKey(t.status?.app) : null);
+  return agentKey(null, fg.argv) ?? (fg.pid && fg.pid !== t.pid && !promptShell(fg.argv) ? agentKey(t.status?.app) : null);
 }
 
 // ── hooks ───────────────────────────────────────────────────────────────────
@@ -176,6 +177,11 @@ async function hook(args = []) {
     // place of the interactive one. Neither is worth bringing back.
     if (isOneShot(key, argv)) return;
     const same = rec?.session === session;
+    let flags = carriedFlags(key, argv);
+    try {
+      const resumed = JSON.parse(process.env.REVIVE_RESUME ?? "null");
+      if (resumed?.agent === key && resumed.session === session && Array.isArray(resumed.flags)) flags = safeFlags(key, resumed.flags);
+    } catch { /* not an automatic resume, or malformed context: use argv */ }
     // The hook runs in the agent's environment: whether it keeps its sessions
     // somewhere else. Only the names are recorded (see `needs` in core.js).
     const needs = needsOf(key, argv, process.env);
@@ -183,7 +189,7 @@ async function hook(args = []) {
       agent: key,
       session,
       cwd: payload.cwd || terminal.foreground?.cwd || terminal.cwd || "",
-      flags: JSON.stringify(carriedFlags(key, argv)),
+      flags: JSON.stringify(flags),
       env: null,
       needs: needs.length ? JSON.stringify(needs) : null,
       // pi and omp keep sessions where their flags, environment or settings say: the file named is the one to check.
@@ -383,7 +389,9 @@ async function resume(args) {
   if (liveAgent(terminal) === rec.agent) throw new Error(`${AGENTS[rec.agent].name} is already running in ${t}.`);
   const fg = terminal.foreground;
   if (fg?.pid && terminal.pid && fg.pid !== terminal.pid) {
-    throw new Error(`${t} is busy with ${fg.argv?.[0] ?? "another program"}. Quit it first.`);
+    // A wrapper's child shell is the terminal's shell too, just as in check.
+    // An unrelated shell or any other foreground program is still busy.
+    if (!idleWrappedShell(await processes(), fg, terminal.pid)) throw new Error(`${t} is busy with ${fg.argv?.[0] ?? "another program"}. Quit it first.`);
   }
   const line = resumeLine(rec);
   if (!line) throw new Error(`Can't build a resume command for ${t}.`);

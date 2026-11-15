@@ -151,7 +151,7 @@ latest release* when a newer release is out. To do it:
   the terminal's theme): `↻ Revive` in bold blue, `  resuming `, the agent's name in
   bold, ` session 9e458eb4`, and ` · REVIVE_AUTO=0 skips this` dim. When flags that lift
   approvals or the sandbox were left out, a second line in yellow: `  without
-  --dangerously-skip-permissions (quit and resume it from the Revive dialog to keep it)`.
+  --dangerously-skip-permissions (only a resume from the Revive dialog keeps it)`.
   Both are `printfLine` (`lib/core.js`): the texts are `printf` arguments, never its
   format.
 

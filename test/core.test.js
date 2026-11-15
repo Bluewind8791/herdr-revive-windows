@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AGENTS, agentKey, needsOf, carriedFlags, isOneShot, validId, command, shQuote, shJoin, readRecord, labelArgs, clearArgs,
-  stateOf, shouldResume, ownShell, isShell, resumeScript, attendedFlags, ago, printfLine,
+  stateOf, shouldResume, ownShell, isShell, promptShell, idleWrappedShell, resumeScript, attendedFlags, ago, printfLine,
 } from "../mods/revive/lib/core.js";
 
 /** What a terminal shows: the text without its colors. */
@@ -200,6 +200,19 @@ test("a run that answers and quits is told from a session", () => {
   assert.equal(isOneShot("vim", ["vim", "-p"]), false);
 });
 
+test("Codex batch subcommands are recognized after options, without treating option values as commands", () => {
+  for (const args of [
+    ["--model", "o3", "exec", "fix it"],
+    ["--no-daemon", "-s", "workspace-write", "e", "fix it"],
+    ["--config", 'model="o3"', "--model=o3", "exec", "fix it"],
+    ["-C", "/work", "--enable", "hooks", "exec", "fix it"],
+  ]) assert.equal(isOneShot("codex", ["codex", ...args]), true, args.join(" "));
+  for (const args of [
+    ["--profile", "exec"], ["--model", "e"], ["--add-dir", "exec"],
+    ["resume", ID, "exec"], ["--", "exec"], ["explain exec"],
+  ]) assert.equal(isOneShot("codex", ["codex", ...args]), false, args.join(" "));
+});
+
 test("a session keeps its agent's config folder, and only that", () => {
   assert.deepEqual(needsOf("claude", ["claude"], { CLAUDE_CONFIG_DIR: "/h/.claude-work", CODEX_HOME: "/c", PATH: "/bin" }), ["CLAUDE_CONFIG_DIR"]);
   assert.deepEqual(needsOf("codex", ["codex"], { CODEX_HOME: "/c" }), ["CODEX_HOME"]);
@@ -221,11 +234,11 @@ test("the resume script runs the agent in its folder and reports a quick failure
   const work = join(dir, "it's here");
   execFileSync("mkdir", ["-p", work]);
   // A fake agent that records where and how it ran, then fails like a missing session.
-  writeFileSync(join(dir, "claude"), `#!/bin/sh\npwd -P > "${dir}/where"\nprintf '%s\\n' "$@" > "${dir}/argv"\nexit 1\n`);
+  writeFileSync(join(dir, "claude"), `#!/bin/sh\npwd -P > "${dir}/where"\nprintf '%s\\n' "$@" > "${dir}/argv"\nprintf '%s' "$REVIVE_RESUME" > "${dir}/context"\nexit 1\n`);
   writeFileSync(join(dir, "node"), `#!/bin/sh\necho "$2" > "${dir}/node"\n`);
   chmodSync(join(dir, "claude"), 0o755);
   chmodSync(join(dir, "node"), 0o755);
-  const rec = { agent: "claude", session: ID, cwd: work, flags: ["--model", "opus"] };
+  const rec = { agent: "claude", session: ID, cwd: work, flags: ["--dangerously-skip-permissions", "--model", "opus"] };
   const script = resumeScript(rec, "/x/revive.mjs");
   // No terminal to hand over: everything runs on the shell's own output.
   const env = { ...process.env, PATH: `${dir}:${process.env.PATH}`, REVIVE_TTY: join(dir, "missing", "tty") };
@@ -234,6 +247,7 @@ test("the resume script runs the agent in its folder and reports a quick failure
   assert.match(out, /\x1b\[1;34m↻ Revive\x1b\[0m/, "Revive in bold blue");
   assert.equal(readFileSync(join(dir, "where"), "utf8").trim(), execFileSync("sh", ["-c", `cd "${work}" && pwd -P`], { encoding: "utf8" }).trim());
   assert.deepEqual(readFileSync(join(dir, "argv"), "utf8").trim().split("\n"), ["--model", "opus", "--resume", ID]);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, "context"), "utf8")), { agent: rec.agent, session: ID, flags: rec.flags });
   assert.equal(readFileSync(join(dir, "node"), "utf8").trim(), "failed");
   assert.equal(resumeScript({ agent: "claude", session: "x;y" }, "/x"), "");
 });
@@ -309,7 +323,7 @@ test("an automatic resume leaves out the flags that lift approvals or the sandbo
   }
   const script = resumeScript(rec("claude", ["--dangerously-skip-permissions", "--permission-mode", "bypassPermissions"]), "/e");
   // Its own line, in yellow, under the note.
-  assert.match(script, /\\033\[33m%s\\033\[0m\\n' ' {2}without --dangerously-skip-permissions, --permission-mode bypassPermissions \(quit and resume it from the Revive dialog to keep them\)'/);
+  assert.match(script, /\\033\[33m%s\\033\[0m\\n' ' {2}without --dangerously-skip-permissions, --permission-mode bypassPermissions \(only a resume from the Revive dialog keeps them\)'/);
   assert.match(script, /claude --resume 9e458eb4/);
   assert.doesNotMatch(resumeScript(rec("claude", ["--model", "opus"]), "/e"), /without/);
 });
@@ -383,4 +397,24 @@ test("came back: running sessions resumed lately, newest first, until the person
   const newer = [...entries, e("g", "running", now - 1_000)];
   assert.deepEqual(cameBack(newer, { now, seen: now - 5_000 }).list.map((x) => x.address), ["g", "b", "a"]);
   assert.deepEqual(cameBack([], { now }), { list: [], latest: null });
+});
+
+test("manual Resume types only into a wrapper's idle child shell", () => {
+  const table = (rows) => new Map(rows.map(([pid, ppid, argv]) => [pid, { pid, ppid, argv }]));
+  // A wrapper (not a shell at its prompt) runs the terminal's shell as its child.
+  const wrapped = table([[100, 1, ["/bin/sh", "/opt/wrap"]], [200, 100, ["zsh", "-l"]]]);
+  assert.equal(idleWrappedShell(wrapped, { pid: 200, argv: ["zsh", "-l"] }, 100), true);
+  // The terminal's own interactive shell: anything in front of it was started by hand.
+  const own = table([[100, 1, ["-zsh"]], [200, 100, ["sudo", "-s"]], [300, 200, ["zsh"]], [400, 100, ["zsh"]], [500, 100, ["su"]], [600, 500, ["-bash"]]]);
+  for (const fg of [{ pid: 300, argv: ["zsh"] }, { pid: 400, argv: ["zsh"] }, { pid: 600, argv: ["-bash"] }]) {
+    assert.equal(idleWrappedShell(own, fg, 100), false, fg.argv.join(" "));
+  }
+  // Busy or not a prompt shell, or outside the terminal's tree.
+  assert.equal(idleWrappedShell(wrapped, { pid: 200, argv: ["sh", "-c", "sleep 60"] }, 100), false);
+  assert.equal(idleWrappedShell(wrapped, { pid: 200, argv: ["vim"] }, 100), false);
+  assert.equal(idleWrappedShell(wrapped, { pid: 999, argv: ["zsh"] }, 100), false);
+  assert.equal(idleWrappedShell(wrapped, { pid: 100, argv: ["zsh"] }, 100), false);
+  assert.equal(promptShell(["bash", "--login", "-i"]), true);
+  assert.equal(promptShell(["bash", "-lc", "x"]), false);
+  assert.equal(promptShell(["zsh", "--command", "x"]), false);
 });
