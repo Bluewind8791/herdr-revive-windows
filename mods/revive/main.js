@@ -9,8 +9,20 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, theme, focused, appHome, home, props, closeOverlay, notify, shared, setShared } from "herdr";
+import * as herdr from "herdr";
 import { AGENTS, canFork, command, shortId, ago, shJoin, unresumable, needsCommand } from "./lib/core.js";
 import { updater, VERSION, PROMPT, RELEASES } from "./lib/update.js";
+
+/**
+ * Whether `herdr-app check` is loading the dialog: `init()` runs for real
+ * there, so it mustn't run the engine or ask GitHub. `checking` came with
+ * Herdr 0.1.16; read from the module, not imported by name, so an older
+ * Herdr, which has no such export, still loads the mod.
+ */
+const checking = () => {
+  try { return typeof herdr.checking === "function" && herdr.checking() === true; }
+  catch { return false; }
+};
 
 /**
  * Why a running session can't be forked from here, or null. A fork opens a new
@@ -104,9 +116,11 @@ export default class Revive extends View {
     this.handle.focus();
     // An overlay may not take focus while it is still opening; ask again once it is up.
     cx.timer.after(120, () => this.handle.focus());
+    this.update = updater({ shared, setShared, fetch });
+    // Under `herdr-app check`: draw, but run nothing (no engine, no refresh, no GitHub).
+    if (checking()) { this.loading = false; return; }
     this.load(cx, { setup: true });
     cx.timer.every(REFRESH_MS, (cx) => this.load(cx));
-    this.update = updater({ shared, setShared, fetch });
     cx.spawn(async (cx) => { await this.update.check(); cx.notify(); });
   }
 
