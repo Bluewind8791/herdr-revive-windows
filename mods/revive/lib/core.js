@@ -29,6 +29,24 @@ const unless = (...keep) => (v) => !keep.includes(v);
 
 const claudeEnd = (reason) => (reason === "clear" || reason === "resume" ? "ignore" : reason === "other" ? "keep" : "forget");
 
+// Codex accepts options before its subcommand. Skip their values too: a
+// profile or model named `exec` is still an interactive launch.
+const CODEX_VALUE_FLAGS = new Set([
+  "-c", "--config", "--enable", "--disable", "--remote", "--remote-auth-token-env",
+  "-i", "--image", "-m", "--model", "--local-provider", "-p", "--profile",
+  "-s", "--sandbox", "-a", "--ask-for-approval", "-C", "--cd", "--add-dir",
+]);
+function codexOneShot(args) {
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i];
+    if (word === "--") return false;
+    if (CODEX_VALUE_FLAGS.has(word)) { i++; continue; }
+    if (word.startsWith("-")) continue;
+    return word === "exec" || word === "e";
+  }
+  return false;
+}
+
 /**
  * The agents Revive can bring back, one entry each:
  * - `name`     what the person reads
@@ -127,7 +145,7 @@ export const AGENTS = {
     fork: (id, flags) => ["codex", "fork", ...flags, id],
     end: claudeEnd,
     env: ["CODEX_HOME"],
-    oneShot: (args) => args[0] === "exec" || args[0] === "e",
+    oneShot: codexOneShot,
     carry: {
       "--no-daemon": 0,
       "--dangerously-bypass-approvals-and-sandbox": 0,
@@ -716,7 +734,11 @@ export function shouldResume(rec, { pid, since = null, shellPid, env = {} }) {
 export function resumeLine(rec, { unattended = false } = {}) {
   const argv = command(rec, "resume", { unattended });
   if (!argv) return "";
-  return `${rec.cwd ? `cd -- ${shQuote(rec.cwd)} && ` : ""}${shJoin(argv)}`;
+  // Only this agent process inherits the original flags, so its SessionStart
+  // (and compaction hooks) won't erase the flags omitted from its argv. A
+  // later manual launch has its own environment and records its own flags.
+  const context = unattended ? `REVIVE_RESUME=${shQuote(JSON.stringify({ agent: rec.agent, session: rec.session, flags: safeFlags(rec.agent, rec.flags ?? []) }))} ` : "";
+  return `${rec.cwd ? `cd -- ${shQuote(rec.cwd)} && ` : ""}${context}${shJoin(argv)}`;
 }
 
 /**
@@ -738,7 +760,7 @@ export function resumeScript(rec, engine) {
     ["dim", " · REVIVE_AUTO=0 skips this"],
   ])];
   if (dropped.length) {
-    notes.push(printfLine([["caution", `  without ${dropped.join(", ")} (quit and resume it from the Revive dialog to keep ${dropped.length > 1 ? "them" : "it"})`]]));
+    notes.push(printfLine([["caution", `  without ${dropped.join(", ")} (only a resume from the Revive dialog keeps ${dropped.length > 1 ? "them" : "it"})`]]));
   }
   const body = [
     ...notes.map((n) => `  ${n}`),

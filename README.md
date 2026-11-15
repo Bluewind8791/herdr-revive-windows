@@ -96,10 +96,11 @@ out:
 
 ```
 ↻ Revive  resuming Claude Code session 9e458eb4 · REVIVE_AUTO=0 skips this
-  without --dangerously-skip-permissions (quit and resume it from the Revive dialog to keep it)
+  without --dangerously-skip-permissions (only a resume from the Revive dialog keeps it)
 ```
 
-Quit the agent and resume it from the dialog to get them back.
+The original flags stay remembered for a later manual resume from the dialog.
+Exiting the agent normally still forgets its session.
 
 **Names, not paths.** Flags that pick something by name are carried only with a plain name:
 Codex's and omp's `--profile`, Claude Code's `--agent` (`reviewer`, `my-plugin:reviewer`)
