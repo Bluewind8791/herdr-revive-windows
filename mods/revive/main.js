@@ -10,7 +10,7 @@ import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, run, theme, focused, appHome, home, props, closeOverlay, notify, shared, setShared } from "herdr";
 import * as herdr from "herdr";
-import { AGENTS, canFork, command, shortId, ago, unresumable, needsCommand } from "./lib/core.js";
+import { AGENTS, canFork, command, shortId, ago, unresumable, needsCommand, cameBack } from "./lib/core.js";
 import { updater, VERSION, PROMPT, RELEASES } from "./lib/update.js";
 
 /**
@@ -41,10 +41,13 @@ const REFRESH_MS = 4000;
 // The dialog grows with its content up to this share of the window; past it, the sessions scroll.
 const MAX_SHARE = 0.85;
 // Room kept for the header and the footer; a note takes NOTE_H more, the
-// new-release strip UPDATE_H.
+// new-release strip UPDATE_H, the came-back strip CAME_BACK_H.
 const CHROME_H = 150;
 const NOTE_H = 56;
 const UPDATE_H = 150;
+const CAME_BACK_H = 80;
+// Shared state: the latest came-back resume the person dismissed (lib/core.js cameBack).
+const CAME_BACK_SEEN = "revive.cameBack";
 
 /**
  * The tallest the sessions may be, in pixels, so the whole dialog fits the
@@ -323,6 +326,28 @@ export default class Revive extends View {
   }
 
   /**
+   * The sessions Revive brought back lately (after a reboot or a core
+   * restart, or a Resume here), so what it did doesn't go unseen. Dismiss
+   * hides that batch for good.
+   */
+  cameBackStrip(t, back) {
+    const n = back.list.length;
+    const named = back.list.slice(0, 3).map((e) => `${AGENTS[e.rec.agent]?.name ?? e.rec.agent} in ${e.where ?? e.address}`);
+    const more = n > 3 ? ` and ${n - 3} more` : "";
+    return h_flex().flex_none().mx(20).mb(14).px(14).py(12).gap(12).items_center().rounded(12)
+      .bg(alpha(t.ansi2, "1f")).border_1().border_color(alpha(t.ansi2, "59"))
+      .child(div().size(28).flex_none().rounded(8).bg(alpha(t.ansi2, "24")).flex().items_center().justify_center()
+        .child(icon("logo", 15, t.ansi2)))
+      .child(v_flex().flex_1().min_w(0).gap(2)
+        .child(h_flex().gap(8).items_center()
+          .child(div().text_size(13).font_semibold().text_color(t.foreground)
+            .child(n === 1 ? "1 session came back" : `${n} sessions came back`))
+          .child(div().text_size(12).text_color(t.dim).child(ago(back.latest))))
+        .child(div().truncate().text_size(11.5).text_color(t.muted).child(named.join(", ") + more)))
+      .child(link(t, "came-back-dismiss", "Dismiss", (_e, cx) => { setShared(CAME_BACK_SEEN, back.latest); cx.notify(); }));
+  }
+
+  /**
    * A newer release, when there is one: what to ask the agent, since an added
    * mod can't update itself (see lib/update.js).
    */
@@ -517,10 +542,12 @@ export default class Revive extends View {
     const mine = this.current();
     const nothing = !this.loading && !others.length && !mine?.rec && !AGENTS[mine?.live] && !this.focus?.includes("/");
     const latest = this.update?.available() ?? null;
-    const listH = listMaxH((this.note ? NOTE_H : 0) + (latest ? UPDATE_H : 0));
+    const back = cameBack(this.entries, { seen: shared(CAME_BACK_SEEN) });
+    const listH = listMaxH((this.note ? NOTE_H : 0) + (latest ? UPDATE_H : 0) + (back.list.length ? CAME_BACK_H : 0));
     return v_flex().id("revive").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .w_full().bg(t.popover)
       .child(this.header(t))
+      .when(back.list.length > 0, (el) => el.child(this.cameBackStrip(t, back)))
       .when(Boolean(latest), (el) => el.child(this.updateStrip(t, latest)))
       .child(div().flex_none().h(1).bg(t.border))
       .child(div().id("revive-scroll").when(listH !== null, (el) => el.max_h(listH)).overflow_y_scrollbar()

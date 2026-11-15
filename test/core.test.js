@@ -362,3 +362,25 @@ test("the shell's notes use ANSI's own colors, and their text never reaches the 
   const out = execFileSync("sh", ["-c", line], { encoding: "utf8" });
   assert.equal(out, "\x1b[1;34m↻ Revive\x1b[0m 100% done, it's fine\x1b[2m hint\x1b[0m\n");
 });
+
+test("came back: running sessions resumed lately, newest first, until the person dismisses that batch", async () => {
+  const { cameBack, CAME_BACK_MS } = await import("../mods/revive/lib/core.js");
+  const now = 1_000_000_000_000;
+  const e = (address, state, resumed) => ({ address, state, rec: { agent: "claude", session: ID, resumed } });
+  const entries = [
+    e("a", "running", now - 60_000),
+    e("b", "running", now - 5_000),
+    e("c", "lost", now - 10_000), // needs you: not "came back"
+    e("d", "running", now - CAME_BACK_MS - 1), // too long ago
+    e("e", "running", null), // never resumed
+    e("f", "running", now + 60_000), // a clock in the future
+  ];
+  const back = cameBack(entries, { now });
+  assert.deepEqual(back.list.map((x) => x.address), ["b", "a"]);
+  assert.equal(back.latest, now - 5_000);
+  // Dismissed: that batch stays hidden; a newer resume shows again.
+  assert.deepEqual(cameBack(entries, { now, seen: now - 5_000 }), { list: [], latest: null });
+  const newer = [...entries, e("g", "running", now - 1_000)];
+  assert.deepEqual(cameBack(newer, { now, seen: now - 5_000 }).list.map((x) => x.address), ["g", "b", "a"]);
+  assert.deepEqual(cameBack([], { now }), { list: [], latest: null });
+});

@@ -68,7 +68,17 @@ latest release* when a newer release is out. To do it:
     semibold) and the installed version in a 10.5px mono chip on `raised` with a
     `border`; *Agent sessions, remembered on their terminals* (12px `dim`) under them;
     an outline **Esc** button on the right that closes the dialog. A 1px `border` line
-    under the header (and under the update strip when it shows).
+    under the header (and under the strips when they show).
+  - **Came-back strip**, when sessions came back lately (`cameBack` in `lib/core.js`:
+    still running, resumed less than 15 minutes ago, automatically or from the dialog):
+    20px in from the sides, 12px radius, `ansi2` at 12% with an `ansi2` 35% border. A
+    28px tile with the logo in `ansi2`; **3 sessions came back** (13px semibold) and *2m
+    ago* (`dim`); under them *Codex in api / 1, pi in web / 2, Claude Code in infra / 1*
+    (up to three, then *and N more*, 11.5px `muted`); a *Dismiss* link on the right. Dismiss
+    saves the newest resume's time in shared state (`revive.cameBack`); a batch no newer
+    than that isn't shown again. It shows above the update strip. Revive can't post this
+    as a notification: a mod runs only while one of its copies is in the shown layout, and
+    a shipped layout takes no new blocks, so it waits for the dialog.
   - **Update strip**, when a newer release is out (see *Update check*): 20px in from the
     sides, 12px radius, `accent` at 7% with an `accent` 28% border. A download icon,
     **Revive v0.7.0 is out** (13px semibold), *you have 0.6.0* (`dim`), a *Stop checking*

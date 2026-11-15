@@ -774,3 +774,19 @@ export function ago(ms, now = Date.now()) {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
 }
+
+/** How long the dialog says sessions came back: long enough to open it after a restart. */
+export const CAME_BACK_MS = 15 * 60 * 1000;
+
+/**
+ * The sessions that came back lately (a resume within CAME_BACK_MS, still
+ * running), newest first, and when the latest did. `seen` is the latest one
+ * the person already dismissed: a batch no newer than that isn't shown again.
+ */
+export function cameBack(entries = [], { now = Date.now(), seen = 0 } = {}) {
+  const list = entries
+    .filter((e) => e?.state === "running" && Number.isFinite(e?.rec?.resumed) && now - e.rec.resumed >= 0 && now - e.rec.resumed < CAME_BACK_MS)
+    .sort((a, b) => b.rec.resumed - a.rec.resumed);
+  const latest = list[0]?.rec.resumed ?? null;
+  return latest !== null && latest > (Number(seen) || 0) ? { list, latest } : { list: [], latest: null };
+}
