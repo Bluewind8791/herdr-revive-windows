@@ -525,6 +525,27 @@ export function ownShell(table, shellPid, terminalPid, marker = null) {
   return { own: false, why: "not the terminal's own shell" };
 }
 
+/**
+ * A shell waiting at its own prompt: no script or `-c` command. One with an
+ * operand may be launching an agent.
+ */
+export const promptShell = (argv) => isShell(argv) && argv.slice(1).every((w) => String(w).startsWith("-")
+  && (String(w).startsWith("--") ? w !== "--command" : !String(w).slice(1).includes("c")));
+
+/**
+ * Whether a manual Resume may type into the foreground shell `fg` of a
+ * terminal whose program is `terminalPid`: only a wrapper's idle child shell.
+ * When the terminal's program is itself an interactive shell, any other shell
+ * in front was started inside it by hand (`zsh`, `sudo -s`, `su`), and typing
+ * there would run the agent as someone else or in a different environment.
+ */
+export function idleWrappedShell(table, fg, terminalPid) {
+  if (!fg?.pid || !terminalPid || fg.pid === terminalPid) return false;
+  if (!promptShell(fg.argv ?? [])) return false;
+  if (promptShell(table.get(terminalPid)?.argv ?? [])) return false;
+  return ownShell(table, fg.pid, terminalPid).own;
+}
+
 /** Session ids are UUIDs (Droid's docs show `session-abc123`); anything else is refused rather than quoted. */
 export const validId = (id) => typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id);
 

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AGENTS, agentKey, needsOf, carriedFlags, isOneShot, validId, command, shQuote, shJoin, readRecord, labelArgs, clearArgs,
-  stateOf, shouldResume, ownShell, isShell, resumeScript, attendedFlags, ago, printfLine,
+  stateOf, shouldResume, ownShell, isShell, promptShell, idleWrappedShell, resumeScript, attendedFlags, ago, printfLine,
 } from "../mods/revive/lib/core.js";
 
 /** What a terminal shows: the text without its colors. */
@@ -397,4 +397,24 @@ test("came back: running sessions resumed lately, newest first, until the person
   const newer = [...entries, e("g", "running", now - 1_000)];
   assert.deepEqual(cameBack(newer, { now, seen: now - 5_000 }).list.map((x) => x.address), ["g", "b", "a"]);
   assert.deepEqual(cameBack([], { now }), { list: [], latest: null });
+});
+
+test("manual Resume types only into a wrapper's idle child shell", () => {
+  const table = (rows) => new Map(rows.map(([pid, ppid, argv]) => [pid, { pid, ppid, argv }]));
+  // A wrapper (not a shell at its prompt) runs the terminal's shell as its child.
+  const wrapped = table([[100, 1, ["/bin/sh", "/opt/wrap"]], [200, 100, ["zsh", "-l"]]]);
+  assert.equal(idleWrappedShell(wrapped, { pid: 200, argv: ["zsh", "-l"] }, 100), true);
+  // The terminal's own interactive shell: anything in front of it was started by hand.
+  const own = table([[100, 1, ["-zsh"]], [200, 100, ["sudo", "-s"]], [300, 200, ["zsh"]], [400, 100, ["zsh"]], [500, 100, ["su"]], [600, 500, ["-bash"]]]);
+  for (const fg of [{ pid: 300, argv: ["zsh"] }, { pid: 400, argv: ["zsh"] }, { pid: 600, argv: ["-bash"] }]) {
+    assert.equal(idleWrappedShell(own, fg, 100), false, fg.argv.join(" "));
+  }
+  // Busy or not a prompt shell, or outside the terminal's tree.
+  assert.equal(idleWrappedShell(wrapped, { pid: 200, argv: ["sh", "-c", "sleep 60"] }, 100), false);
+  assert.equal(idleWrappedShell(wrapped, { pid: 200, argv: ["vim"] }, 100), false);
+  assert.equal(idleWrappedShell(wrapped, { pid: 999, argv: ["zsh"] }, 100), false);
+  assert.equal(idleWrappedShell(wrapped, { pid: 100, argv: ["zsh"] }, 100), false);
+  assert.equal(promptShell(["bash", "--login", "-i"]), true);
+  assert.equal(promptShell(["bash", "-lc", "x"]), false);
+  assert.equal(promptShell(["zsh", "--command", "x"]), false);
 });

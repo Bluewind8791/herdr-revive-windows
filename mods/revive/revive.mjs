@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   AGENTS, agentKey, carriedFlags, safeFlags, hookOwner, hookPayload, endAction, isOneShot, readRecord, labelArgs, clearArgs, resumedArgs,
-  stateOf, shouldResume, ownShell, isShell, resumeScript, resumeLine, shQuote, validId, needsOf, shortId, needsHint, unresumable,
+  stateOf, shouldResume, ownShell, promptShell, idleWrappedShell, resumeScript, resumeLine, shQuote, validId, needsOf, shortId, needsHint, unresumable,
   printfLine,
 } from "./lib/core.js";
 import { agentDirs, findSession } from "./lib/sessions.js";
@@ -79,13 +79,9 @@ async function listTerminals() {
  * The agent in the terminal's foreground, or null. By its command line, or,
  * for an agent behind a wrapper with another name (`node …/cli.mjs`), by its
  * own report, which only counts while something other than the terminal's
- * shell is in the foreground: a report outlives the agent that sent it.
+ * shell is in the foreground: a report outlives the agent that sent it. A
+ * shell at its own prompt ignores the report; one running a script keeps it.
  */
-// Shells with a script/command operand may be launching an agent; those still
-// need the OSC report. A shell without one can be waiting at its own prompt.
-const promptShell = (argv) => isShell(argv) && argv.slice(1).every((w) => String(w).startsWith("-")
-  && (String(w).startsWith("--") ? w !== "--command" : !String(w).slice(1).includes("c")));
-
 function liveAgent(t) {
   const fg = t.foreground;
   if (!fg?.argv) return null;
@@ -395,8 +391,7 @@ async function resume(args) {
   if (fg?.pid && terminal.pid && fg.pid !== terminal.pid) {
     // A wrapper's child shell is the terminal's shell too, just as in check.
     // An unrelated shell or any other foreground program is still busy.
-    const idle = promptShell(fg.argv) && ownShell(await processes(), fg.pid, terminal.pid).own;
-    if (!idle) throw new Error(`${t} is busy with ${fg.argv?.[0] ?? "another program"}. Quit it first.`);
+    if (!idleWrappedShell(await processes(), fg, terminal.pid)) throw new Error(`${t} is busy with ${fg.argv?.[0] ?? "another program"}. Quit it first.`);
   }
   const line = resumeLine(rec);
   if (!line) throw new Error(`Can't build a resume command for ${t}.`);
