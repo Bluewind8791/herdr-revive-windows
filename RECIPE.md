@@ -344,6 +344,10 @@ reboot with either agent.
   `.bashrc`) is taken out when bash's is written. A file without Revive in it is never
   rewritten by install or uninstall.
 - Hooks never fail an agent: every error is swallowed and the exit code is 0.
+- Under `herdr-app check` (Herdr's `checking()`, 0.1.16 and later) the dialog draws but
+  runs nothing: no engine, no refresh, no update check. `checking` is read from the
+  `herdr` module rather than imported by name, so an older Herdr, which has no such
+  export, still loads the mod.
 
 ## Update check
 
