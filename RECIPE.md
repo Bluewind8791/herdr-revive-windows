@@ -58,52 +58,84 @@ latest release* when a newer release is out. To do it:
 
 ## What you see
 
-- **Dialog** (`mod.open:revive`, 620px wide, as tall as its content, on `popover`, 20px
-  padding at the sides, 18px above and 16px below). The sessions scroll once the dialog
-  would pass 85% of the window; the header, the note and the footer always show.
-  - A header: **↻ Revive** (16px semibold) and *Agent sessions, remembered on their
-    terminals* in `dim`.
-  - When a newer release is out: a `raised` card with a `border` (10px radius, 12px
-    padding): **Revive v0.6.0 is out** (13px semibold), *you have v0.5.2* in `dim`, a
-    `dim` *Stop checking* link on the right, *To update, ask your agent:* and the prompt
-    in an 11px mono box on `background`. Buttons: **Later** (ghost), **What changed**
-    (outline, opens the release page) and a solid **Copy prompt**. See *Update check*.
-  - Sections titled in 10.5px medium `dim` capitals:
-    - **FOCUSED TERMINAL**: a `raised` card with a `border`, 12px radius, 14px padding. The
-      agent's name (14px semibold), the first 8 characters of the session id in JetBrains
-      Mono `dim`, and a state on the right: a 6px dot and a word in the state's color
-      (*Running* in `ansi2`, *Lost to a restart* and *Interrupted* in `ansi3`, *Resume
-      failed* in `ansi1`). Under it the folder in `muted`, with the home folder as `~`, the
-      carried flags in 10.5px mono `dim`, and for a session started before Revive was
-      installed, a note that it can be forked but won't come back by itself. Buttons: for a
-      running agent, **Fork right** `F`, **Fork below** `D` and **Fork to a tab** `T`
-      (outline); for one that needs you, a solid **Resume** `↵`. For a running agent that
-      can't fork (Cursor): no fork buttons, and *Cursor can't fork a session.* in `dim`. A
-      Claude Code session
-      with no transcript yet can't be forked: the Fork buttons are disabled, F/D/T do
-      nothing, and the card says *This session has no message yet, so there is nothing to
-      fork. Send it one first.* A session that ran with something Revive doesn't carry
-      (see *Config folders*) can't be forked from the dialog either: *It ran with
-      CLAUDE_CONFIG_DIR: fork it from its own shell.* Neither can one whose folder failed
-      the check: *Its folder is missing, not yours, or writable by others.* An agent running in the terminal with nothing on record
-      gets the same card without an id or buttons: its name, *Running*, its folder, and a
-      `dim` note that Revive has no record of it, so it can't be forked or brought back.
-      For Codex the note adds that Codex records a session at its first message, and not
-      at all while its shared background server runs it (`daemon_auto_start`). Without an
-      agent: *No agent session in the focused terminal.* On another machine:
-      a note that Revive works on this computer for now.
-    - **NEED YOU**: other terminals whose session is lost, interrupted or failed. Each row
-      (48px, 10px radius, filled with `raised`, `hover` on hover, 4px apart) shows the
-      agent (13px medium), the short id, *space / tab* and *resumed 3m ago* in `dim`, the
-      state, an **Auto** / **Auto off** ghost toggle and a solid **Resume**. Clicking the
-      row closes the dialog and focuses that terminal.
-    - **OTHER SESSIONS**: the remaining ones, same rows without the fill or **Resume**. Sessions found
-      through their pid but not remembered say *not remembered* instead of the toggle.
-  - A note line for errors (`ansi1`) or install output (`muted`), on `raised`.
-  - A footer above a `border` line: `✓ Claude Code hooks`, `✓ Codex hooks`, `✓ pi extension`,
-    `✓ omp extension`, `✓ Droid hooks`, `✓ Cursor hooks` (each only when that agent is installed), `✓ shell`,
-    each `muted` with a `ansi2` ✓ when installed and `ansi1` with `✕` when not, and a solid
-    **Install** button while anything is missing.
+- **Dialog** (`mod.open:revive`, 620px wide, as tall as its content, on `popover`). Every
+  color is a theme token, so it follows light and dark themes; a tint is the token with a
+  two-digit hex alpha, as Herdr's own mods do. The sessions scroll once the dialog would
+  pass 85% of the window; the header, the update strip, the note and the footer always
+  show. Icons are Lucide-style strokes in `mods/revive/icons/`, drawn in the text color.
+  - **Header** (20px at the sides, 18px above, 16px below): a 32px tile, 9px radius, in
+    `accent` at 16%, with the logo (`icons/logo.svg`) in `accent`; **Revive** (15px
+    semibold) and the installed version in a 10.5px mono chip on `raised` with a
+    `border`; *Agent sessions, remembered on their terminals* (12px `dim`) under them;
+    an outline **Esc** button on the right that closes the dialog. A 1px `border` line
+    under the header (and under the update strip when it shows).
+  - **Update strip**, when a newer release is out (see *Update check*): 20px in from the
+    sides, 12px radius, `accent` at 7% with an `accent` 28% border. A download icon,
+    **Revive v0.7.0 is out** (13px semibold), *you have 0.6.0* (`dim`), a *Stop checking*
+    link on the right; the prompt in an 11px mono box on `background`, cut with an
+    ellipsis, with a small solid **Copy** button; *Paste it to your agent.* (`dim`), and
+    on the right *What changed* (in `accent`, opens the release page) and *Later*.
+  - Sections, titled in 11px medium `dim` capitals, 18px above each title:
+    - **FOCUSED TERMINAL**: a `raised` card with a `border`, 12px radius, 16px padding.
+      The agent's tile (38px, see *Agent tiles*), its name (14px semibold), the first 8
+      characters of the session id (11px mono `dim`), the folder with a folder icon
+      (12px `muted`, the home folder as `~`), and the state on the right (*States*). The
+      carried flags as mono chips on `background`, one per flag with its values. Notes
+      in 12px `dim`. Buttons: for a running agent that forks, a solid **Fork right** `F`
+      and outline **Below** `D` and **New tab** `T`, each with its icon and key; for one
+      that needs you, a solid **Resume** `↵`, and **Copy command** when it can only be
+      resumed by hand. For a running agent that can't fork (Cursor): no fork buttons,
+      and *Cursor can't fork a session.* A Claude Code session with no transcript yet
+      can't be forked: the Fork buttons are disabled, F/D/T do nothing, and the card says
+      *This session has no message yet, so there is nothing to fork. Send it one first.*
+      A session that ran with something Revive doesn't carry (see *Config folders*)
+      can't be forked from the dialog either: *It ran with CLAUDE_CONFIG_DIR: fork it
+      from its own shell.* Neither can one whose folder failed the check: *Its folder is
+      missing, not yours, or writable by others.* A session started before Revive was
+      installed says it can be forked but won't come back by itself. An agent running
+      with nothing on record gets the same card without an id or buttons, and a note
+      that Revive has no record of it, so it can't be forked or brought back; for Codex
+      the note adds that Codex records a session at its first message, and not at all
+      while its shared background server runs it (`daemon_auto_start`).
+      Without an agent: a dashed `border` card with a terminal icon, *No agent in this
+      terminal* and *Start one here and Revive remembers it from its first message.*
+      (*Looking…* until the first list). On another machine: the same card, *The focused
+      terminal is on another machine* and *Revive works on this computer for now.*
+    - **NEEDS YOU**, with a count in an `ansi3` pill: other terminals whose session is
+      lost, interrupted or failed. Each row (54px, 10px radius, `raised` with a
+      `border`, `hover` on hover, 4px apart): the agent's tile (30px), its name (13px
+      medium) and short id, *space / tab · resumed 3m ago* in `dim`, the state, **Auto**
+      with a switch, and a small solid **Resume**. Clicking the row closes the dialog and
+      focuses that terminal.
+    - **OTHER SESSIONS**: the rest, the same rows (50px) without the fill, border or
+      **Resume**, 2px apart. A session found through its pid but not remembered says
+      *not remembered* instead of the switch.
+  - **Nothing at all** (no session remembered anywhere, no agent in the focused
+    terminal): in place of the sections, centered, a 52px `raised` tile with the logo in
+    `muted`, **No sessions remembered yet** (14px semibold), *Start an agent in a Herdr
+    terminal. Revive remembers its session at the first message and brings it back after
+    a reboot or a core restart.* (12.5px `dim`), and a chip with its tile and name for up
+    to four installed agents (*+N more* after them).
+  - A note line for errors (`ansi1`, on `ansi1` at 8%) or install output (`muted`), 8px
+    radius, above the footer.
+  - **Footer**, under a `border` line, on `chrome`: when everything is installed, a check
+    in `ansi2` and *Ready: Claude Code, Codex, pi, zsh* (each installed agent, then each
+    shell with the block) in `muted`; keys on the right: `↵` resume, `F` fork, `R`
+    refresh. When something is missing: on `ansi3` at 7% with an `ansi3` 25% line, an
+    alert icon in `ansi3`, **Setup isn't complete** and what's missing (*pi extension
+    missing · shell block missing*), and a small solid **Install**.
+  - **States**: *Running* in `ansi2`, *Lost to a restart* and *Interrupted* in `ansi3`,
+    *Resume failed* in `ansi1`. A 6px dot and the word (11.5px medium); for the ones
+    that need you, on a 22px pill of the same color at 12%.
+  - **Agent tiles**: the agent's own icon from Herdr's program table (`knownAgents()`,
+    looked up by the agent's key, then its program and report names): `svg(icon)` in
+    its `color` when `tint`, else `image(icon)`, on its `tile` color at 18%, or on
+    `foreground` at 12% when it has none. 27% radius. An agent Herdr doesn't list (or a
+    Herdr without `knownAgents`) gets its initial in `muted` on the same tile.
+  - **Switch**: 32×18, a 14px white knob; `accent` when on, `foreground` at 18% when off.
+  - **Buttons**: solid on `accent` with `accent_foreground` (semibold), outline on
+    `raised` with a `border`, 8px radius, 32px tall (28px small), the key in a 10px mono
+    chip.
 - The list refreshes every 4 seconds while the dialog is open.
 - In a resumed pane, before the agent starts: `↻ Revive: resuming Claude Code session
   9e458eb4. REVIVE_AUTO=0 skips this.` in dim text. When flags that lift approvals or the
@@ -117,6 +149,7 @@ latest release* when a newer release is out. To do it:
 | --- | --- |
 | `mods/revive/main.js` | The dialog |
 | `mods/revive/lib/core.js` | Agents (the `AGENTS` table), flags, hook payloads, labels, states and the resume script: plain functions shared by the dialog and the engine |
+| `mods/revive/icons/*.svg` | The dialog's icons (logo, folder, fork, copy, alert, …): Lucide-style strokes in `currentColor` |
 | `mods/revive/lib/update.js` | Dialog only: the installed `VERSION` and the daily check for a newer release |
 | `mods/revive/lib/sessions.js` | Engine only: finding a running agent's session from the files it writes, for one nobody recorded |
 | `mods/revive/revive.mjs` | The engine, run with the person's Node: hooks, the shell check, list, resume, install |
