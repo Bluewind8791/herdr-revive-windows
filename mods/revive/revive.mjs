@@ -28,6 +28,7 @@ import { promisify } from "node:util";
 import {
   AGENTS, agentKey, carriedFlags, hookOwner, hookPayload, endAction, isOneShot, readRecord, labelArgs, clearArgs, resumedArgs,
   stateOf, shouldResume, ownShell, resumeScript, resumeLine, shQuote, validId, needsOf, shortId, needsHint, unresumable,
+  printfLine,
 } from "./lib/core.js";
 import { agentDirs, findSession } from "./lib/sessions.js";
 
@@ -283,8 +284,10 @@ async function check(args) {
   if (!verdict.go && verdict.hint) {
     // Said once: marked failed, the next shell stays quiet; the dialog offers it by hand.
     await label(t, labelArgs({ failed: Date.now() }));
-    const note = `↻ Revive: not resuming ${AGENTS[rec.agent].name} session ${shortId(rec.session)}: ${verdict.why}. Resume it by hand (Revive dialog).`;
-    process.stdout.write(`printf '\\033[2m%s\\033[0m\\n' ${shQuote(note)}\n`);
+    process.stdout.write(`${printfLine([
+      ["warn", "↻ Revive"], [null, `  not resuming ${AGENTS[rec.agent].name} session ${shortId(rec.session)}: ${verdict.why}.`],
+      ["dim", " Resume it by hand from the Revive dialog."],
+    ])}\n`);
     return;
   }
   if (!verdict.go) return;
