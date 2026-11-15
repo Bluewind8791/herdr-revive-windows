@@ -474,15 +474,18 @@ export default class Revive extends View {
         .when(installed.length > shown.length, (row) => row.child(div().text_size(11.5).text_color(t.dim).child(`+${installed.length - shown.length} more`)))));
   }
 
-  /** What's set up: one line when all is, else what's missing and Install. Keys on the right. */
-  footer(t) {
+  /**
+   * What's set up: one line when all is, else what's missing and Install.
+   * Keys on the right, unless there's nothing they could act on (`showKeys`).
+   */
+  footer(t, showKeys = true) {
     const s = this.setup;
     const keys = h_flex().flex_none().gap(10).items_center().text_size(11).text_color(t.dim)
       .child(h_flex().gap(4).items_center().child(kbd(t, "↵")).child("resume"))
       .child(h_flex().gap(4).items_center().child(kbd(t, "F")).child("fork"))
       .child(h_flex().gap(4).items_center().child(kbd(t, "R")).child("refresh"));
     const bar = (el) => el.flex_none().gap(12).items_center().px(20).border_t_1();
-    if (!s) return bar(h_flex()).py(11).border_color(t.border).bg(t.chrome).child(div().flex_1()).child(keys);
+    if (!s) return bar(h_flex()).py(11).border_color(t.border).bg(t.chrome).child(div().flex_1()).when(showKeys, (el) => el.child(keys));
     const shells = Object.entries(s.shell ?? {}).filter(([, on]) => on).map(([name]) => name);
     // One entry per agent: true, false, or null when that agent isn't installed.
     const agents = Object.keys(AGENTS).filter((k) => s[k] !== null && s[k] !== undefined);
@@ -496,7 +499,7 @@ export default class Revive extends View {
           .child(icon("check", 13, t.ansi2))
           .child(div().truncate().text_size(11.5).text_color(t.muted)
             .child(`Ready: ${[...agents.map((k) => AGENTS[k].name), ...shells].join(", ")}`)))
-        .child(keys);
+        .when(showKeys, (el) => el.child(keys));
     }
     return bar(h_flex()).py(12).border_color(alpha(t.ansi3, "40")).bg(alpha(t.ansi3, "12"))
       .child(icon("alert", 16, t.ansi3))
@@ -532,6 +535,6 @@ export default class Revive extends View {
       .when(Boolean(this.note), (el) => el.child(div().flex_none().mx(20).mb(12).px(10).py(8).rounded(8).text_size(11.5)
         .bg(alpha(this.note.level === "error" ? t.ansi1 : t.foreground, "14"))
         .text_color(this.note.level === "error" ? t.ansi1 : t.muted).child(this.note.text)))
-      .child(this.footer(t));
+      .child(this.footer(t, !nothing));
   }
 }

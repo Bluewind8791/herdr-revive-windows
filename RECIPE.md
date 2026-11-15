@@ -120,7 +120,7 @@ latest release* when a newer release is out. To do it:
     radius, above the footer.
   - **Footer**, under a `border` line, on `chrome`: when everything is installed, a check
     in `ansi2` and *Ready: Claude Code, Codex, pi, zsh* (each installed agent, then each
-    shell with the block) in `muted`; keys on the right: `↵` resume, `F` fork, `R`
+    shell with the block) in `muted`; keys on the right (not in the empty state, where there is nothing to resume or fork): `↵` resume, `F` fork, `R`
     refresh. When something is missing: on `ansi3` at 7% with an `ansi3` 25% line, an
     alert icon in `ansi3`, **Setup isn't complete** and what's missing (*pi extension
     missing · shell block missing*), and a small solid **Install**.
