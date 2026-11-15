@@ -204,6 +204,8 @@ How it treats your files:
 ```sh
 node ~/.config/herdr-app/mods/revive/revive.mjs install --zsh --bash   # both shells
 node ~/.config/herdr-app/mods/revive/revive.mjs install --no-pi        # skip an agent: --no-codex, --no-pi, --no-omp, --no-droid, --no-cursor
+node ~/.config/herdr-app/mods/revive/revive.mjs adopt --dry-run        # what adopt would remember of the Claude Code sessions already running
+node ~/.config/herdr-app/mods/revive/revive.mjs adopt                  # remember them
 node ~/.config/herdr-app/mods/revive/revive.mjs uninstall              # take it all out
 node ~/.config/herdr-app/mods/revive/revive.mjs doctor                 # what is installed
 ```
@@ -290,8 +292,10 @@ REVIVE_DEBUG=1 zsh               # say why a shell did or didn't resume
 - Sessions started before Revive was installed have no record. The dialog still finds a
   running one from the files its agent writes (Claude Code: `sessions/<pid>.json`; Droid:
   the newest `~/.factory/sessions/<folder, dashed>/<id>.jsonl` written since it started;
-  Cursor: the newest `~/.cursor/chats/<md5 of the folder>/<id>/`), so it can be forked, but
-  it won't come back by itself.
+  Cursor: the newest `~/.cursor/chats/<md5 of the folder>/<id>/`), so it can be forked.
+  A running Claude Code session can be remembered with `revive.mjs adopt`, once it has a
+  message. Any other agent comes back by itself only after it has been restarted once:
+  Droid's and Cursor's newest file is a guess, good enough to show but not to keep.
 - An agent that died while its shell lived on is not resumed automatically, since nothing
   told the shell. Use **Resume** in the dialog.
 - Shells: zsh and bash. Other shells can run `revive.mjs check --shell $$` from their own
