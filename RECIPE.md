@@ -31,8 +31,11 @@ Cursor are built from their docs and not tested end to end yet.
    an agent. pi loads its extension the next time it starts or at `/reload`, omp only
    the next time it starts.
 6. Run `node ~/.config/herdr-app/mods/revive/revive.mjs doctor` and report what it shows.
-7. New sessions are remembered from now on. Sessions already running are not; they come
-   back by themselves only after they are restarted once.
+7. New sessions are remembered from now on. Sessions already running are not: `install`
+   and `doctor` (`unremembered`) say how many Claude Code ones `adopt` could remember.
+   If there are any, run `node ~/.config/herdr-app/mods/revive/revive.mjs adopt --dry-run`
+   and show the person what it lists; `adopt` remembers them if they want. Any other
+   agent comes back by itself only after it is restarted once.
 
 ## Updating it (for the agent doing it)
 
@@ -102,7 +105,13 @@ latest release* when a newer release is out. To do it:
       can't be forked from the dialog either: *It ran with CLAUDE_CONFIG_DIR: fork it
       from its own shell.* Neither can one whose folder failed the check: *Its folder is
       missing, not yours, or writable by others.* A session started before Revive was
-      installed says it can be forked but won't come back by itself. An agent running
+      installed says it can be forked but won't come back by itself; for Claude Code, *…
+      until you remember it*, with an outline **Remember** after the Fork buttons
+      (`revive.mjs adopt T`; *Remembering…* while it runs, and the engine's reason in the
+      note line when it won't). With no message yet it says *nothing to fork or remember*
+      and **Remember** is disabled too; when the engine can't tell the folder it started
+      in, *Revive can't remember it:* and the engine's reason (`rememberWhy`). No key: `R`
+      is Refresh. An agent running
       with nothing on record gets the same card without an id or buttons, and a note
       that Revive has no record of it, so it can't be forked or brought back; for Codex
       the note adds that Codex records a session at its first message, and not at all
@@ -119,7 +128,8 @@ latest release* when a newer release is out. To do it:
       focuses that terminal.
     - **OTHER SESSIONS**: the rest, the same rows (50px) without the fill, border or
       **Resume**, 2px apart. A session found through its pid but not remembered says
-      *not remembered* instead of the switch.
+      *not remembered* instead of the switch, and, when the engine says it can be
+      (`rememberable`), a small ghost **Remember** that does what the card's does.
   - **Nothing at all** (no session remembered anywhere, no agent in the focused
     terminal): in place of the sections, centered, a 52px `raised` tile with the logo in
     `muted`, **No sessions remembered yet** (14px semibold), *Start an agent in a Herdr
@@ -163,8 +173,8 @@ latest release* when a newer release is out. To do it:
 | `mods/revive/lib/core.js` | Agents (the `AGENTS` table), flags, hook payloads, labels, states and the resume script: plain functions shared by the dialog and the engine |
 | `mods/revive/icons/*.svg` | The dialog's icons (logo, folder, fork, copy, alert, …): Lucide-style strokes in `currentColor` |
 | `mods/revive/lib/update.js` | Dialog only: the installed `VERSION` and the daily check for a newer release |
-| `mods/revive/lib/sessions.js` | Engine only: finding a running agent's session from the files it writes, for one nobody recorded |
-| `mods/revive/revive.mjs` | The engine, run with the person's Node: hooks, the shell check, list, resume, install |
+| `mods/revive/lib/sessions.js` | Engine only: finding a running agent's session from the files it writes, for one nobody recorded, and the folder a Claude Code one started in |
+| `mods/revive/revive.mjs` | The engine, run with the person's Node: hooks, the shell check, list, resume, adopt, install |
 | `mods/revive/lib/extension.js` | Extensions only: what pi's and omp's extensions share (running `revive.mjs hook` one at a time, the SIGTERM/SIGHUP listener) |
 | `mods/revive/pi/revive.ts` | pi's extension: runs `revive.mjs hook` at pi's session start and end, with Claude Code's payload |
 | `mods/revive/omp/revive.ts` | omp's extension: the same for omp, which has its own extension folder and events |
@@ -260,7 +270,8 @@ A running agent nobody recorded is found from its files: Claude Code by
 `~/.claude/sessions/<pid>.json`; Droid by the newest `<id>.jsonl` in
 `~/.factory/sessions/<cwd, every non-alphanumeric a dash>/` written since the agent started;
 Cursor by the newest `<id>/` (folder or its `store.db`) in `~/.cursor/chats/<md5 of the
-cwd>/` written since then. Codex, pi and omp: not found.
+cwd>/` written since then. Codex, pi and omp: not found. `adopt` records a Claude Code one
+from the same file (see *Rules*); the others are only shown.
 
 Checked by hand with droid 1.1.0 and cursor-agent 2026.10.22 on macOS: Droid reports
 `droid` to Herdr; its SessionStart hook records the session and its flags; `droid --auto
@@ -317,6 +328,29 @@ reboot with either agent.
 - The folder a record names is used only as the person's own: `cd` goes to its real
   path (links resolved), and only when it is an existing folder that belongs to this
   user and that others can't write to. Otherwise the record's folder is refused.
+- `adopt` writes the labels a `SessionStart` would have for a running Claude Code session
+  nobody recorded (one started before Revive was installed), from the agent's own process
+  only: the id from its own `sessions/<pid>.json` in this user's Claude folder (as `list`
+  finds it), through `validId`; the flags from its live command line, through the carry
+  list; the folder it started in, from its transcript, which must pass the check above. A
+  label is only asked whether a record exists: nothing in one can make adopt write
+  anything, it grants nothing new, and what it writes is read back like a hook's record.
+- `adopt` records Claude Code only. Droid's and Cursor's session is the newest file in
+  their folder's store, a guess good enough to show but not to keep; Codex, pi and omp
+  aren't found at all.
+- `adopt` skips a terminal with a record, another machine's, a one-shot run, a session it
+  can't find, one already on record in another terminal or found in two (it would come
+  back in two panes), and one whose folder it can't tell or that fails the check.
+- The folder is the one the session started in, which its hook records and `--resume`
+  needs: `sessions/<pid>.json` and the terminal hold the folder it is in now, which can
+  move. It is the `cwd` of the first entry in its transcript that has one, and must be
+  the folder the transcript is filed under (`projects/<folder, every non-alphanumeric a
+  dash>/`). It is never taken from that name, which can't be turned back into a path
+  (`/a/my-proj` and `/a/my/proj` are both `-a-my-proj`). A session with no transcript has
+  no message yet, so nothing to resume, and is skipped.
+- `adopt` records `CLAUDE_CONFIG_DIR` as a need (by name) when it is set in its own
+  environment: the session was found in the folder it names, so the agent ran with it.
+  `--dry-run` prints the `hc label` it would run and writes nothing.
 - The agent is known by the command line the hook sent (pi, omp), then the foreground command
   line, then the agent process the hook came from, then the hook's `--agent`, then the
   payload (its transcript path, Cursor's `cursor_version`), and only then the terminal's
@@ -366,6 +400,10 @@ reboot with either agent.
   this process's folder. Otherwise it says `null` and the fork is let through, since an
   agent started with a `CLAUDE_CONFIG_DIR` the app doesn't have keeps its transcripts
   elsewhere. A folder or variable named in a label is never taken as proof.
+- For a running Claude Code session nobody recorded, `list` also says `rememberable`:
+  true when `adopt` can tell the folder it started in, false with `rememberWhy` when it
+  can't. Other agents get neither, and the dialog offers no **Remember** for them. The
+  dialog's **Remember** runs `adopt T`, which checks everything again.
 - `check` marks the terminal (`shell`, `since`, `resumed`) before printing, so a second
   shell can't resume the same session again.
 - The shell block runs what `check` printed at the first prompt (zsh: a one-time `precmd`
@@ -380,8 +418,19 @@ reboot with either agent.
 - Fork opens `terminal.open {argv, folder, place}` with the agent's fork command:
   `claude … --resume <id> --fork-session`, `codex fork … <id>`, `pi … --fork <id>`,
   `omp … --fork <id>`, `droid … --fork <id>`. An agent with no fork (Cursor) gets no fork buttons or keys.
+  A Claude Code session nobody recorded is forked in the folder it started in, as `adopt`
+  finds it, or the one it is in now when that can't be told.
 - pi's and omp's transcript check is the recorded session file: it exists, or the session never got
   a message. A record without one is let through.
+- Install ends by counting the running sessions `adopt` could remember (`adopt
+  --dry-run`), and says how many, pointing to `adopt`. It never adopts: it runs on every
+  update and from the dialog's **Install**, and changes nothing but its own files.
+  Uninstall doesn't count. In a Herdr terminal it asks `hc` only while that terminal's
+  herdr-core answers (an `hc` that finds no core starts one); elsewhere (the dialog's
+  **Install**) as `list` does. A failure is a warning; the install still succeeds.
+- `doctor` adds the same count as `unremembered`, or null when `hc` wasn't asked or
+  failed. The dialog's setup (`list --setup`) leaves it out: the dialog lists the
+  sessions itself.
 - Install writes an agent's hooks only into the file it reads now, and takes Revive's
   out of every other file it may be in (Droid's `settings.json` once a `hooks.json`
   exists). The shell block works the same way: one file per shell, and a bash block an

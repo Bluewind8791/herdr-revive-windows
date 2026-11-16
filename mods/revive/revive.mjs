@@ -12,6 +12,11 @@
 //   revive.mjs list [--focus T]   every remembered session, as JSON, for the dialog
 //   revive.mjs resume T           resume T's session in T's shell
 //   revive.mjs auto T on|off      allow or stop automatic resume for T
+//   revive.mjs adopt [T] [--dry-run]
+//                                 remember the running Claude Code sessions
+//                                 nobody recorded (started before Revive was
+//                                 installed), or only T's; --dry-run says what
+//                                 it would write
 //   revive.mjs install [--zsh] [--bash] [--no-shell] [--no-codex] [--no-pi] [--no-omp] [--no-droid] [--no-cursor]
 //   revive.mjs uninstall
 //   revive.mjs doctor             what is installed, as JSON
@@ -27,10 +32,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   AGENTS, agentKey, carriedFlags, safeFlags, hookOwner, hookPayload, endAction, isOneShot, readRecord, labelArgs, clearArgs, resumedArgs,
-  stateOf, shouldResume, ownShell, promptShell, idleWrappedShell, resumeScript, resumeLine, shQuote, validId, needsOf, shortId, needsHint, unresumable,
+  stateOf, shouldResume, ownShell, promptShell, idleWrappedShell, resumeScript, resumeLine, shQuote, shJoin, validId, needsOf, shortId, needsHint, unresumable,
   printfLine,
 } from "./lib/core.js";
-import { agentDirs, findSession } from "./lib/sessions.js";
+import { agentDirs, claudeStartFolder, findSession } from "./lib/sessions.js";
 
 const run = promisify(execFile);
 export const ENGINE = fileURLToPath(import.meta.url);
@@ -338,6 +343,25 @@ function forkable(rec, fgPid) {
 /** A `ps` start time (`Sat Oct 31 18:49:55 2026`, in LC_ALL=C) in ms, or null. */
 const startMs = (since) => { const ms = Date.parse(since ?? ""); return Number.isFinite(ms) ? ms : null; };
 
+/**
+ * The session a live agent nobody recorded holds, from the files it writes
+ * (lib/sessions.js), and the folder to resume or fork it in: `{ session, cwd }`,
+ * with `why` when Claude Code's start folder can't be told (`cwd` is then the
+ * one it runs in now), or null.
+ */
+function runningSession(t, agent, fgSince) {
+  if (!t.foreground?.pid) return null;
+  const dirs = agentDirs();
+  const now = t.foreground.cwd ?? t.cwd ?? null;
+  const session = findSession(agent, { dirs, pid: t.foreground.pid, cwd: now, startedMs: startMs(fgSince) });
+  if (!session) return null;
+  // Claude Code files a conversation under the folder it started in, and
+  // finds it only from there; the agent may have moved since.
+  if (agent !== "claude") return { session, cwd: now };
+  const start = claudeStartFolder({ dirs, session, cwd: now });
+  return start.why ? { session, cwd: now, why: start.why } : { session, cwd: start.cwd };
+}
+
 function describe(t, since, focus, fgSince = null) {
   const rec = loadRecord(t.labels);
   const live = liveAgent(t);
@@ -352,13 +376,16 @@ function describe(t, since, focus, fgSince = null) {
   };
   // A live agent nobody recorded yet (started before Revive was installed),
   // found from the files it writes (lib/sessions.js).
-  if (!rec && live && t.foreground?.pid) {
-    const cwd = t.foreground.cwd ?? t.cwd ?? null;
-    const session = findSession(live, { dirs: agentDirs(), pid: t.foreground.pid, cwd, startedMs: startMs(fgSince) });
-    if (session) {
-      entry.rec = { agent: live, session, cwd, flags: carriedFlags(live, t.foreground.argv), shell: t.pid, auto: true };
+  if (!rec && live) {
+    const found = runningSession(t, live, fgSince);
+    if (found) {
+      entry.rec = { agent: live, session: found.session, cwd: found.cwd, flags: carriedFlags(live, t.foreground.argv), shell: t.pid, auto: true };
       entry.state = "running";
       entry.unrecorded = true;
+      // Only Claude Code's can be remembered (`adopt`): false, with why, while
+      // its start folder can't be told; absent for the others.
+      if (live === "claude") entry.rememberable = !found.why;
+      if (live === "claude" && found.why) entry.rememberWhy = found.why;
     }
   }
   // An agent running with nothing on record: the dialog still names it, and its folder.
@@ -415,6 +442,131 @@ async function resume(args) {
 async function auto(args) {
   const [t, value] = args;
   await label(t, labelArgs({ auto: value === "off" ? "off" : null }));
+}
+
+// ── adopt ───────────────────────────────────────────────────────────────────
+
+/**
+ * What adopting a terminal would record: `{ agent, session, fields }`, the
+ * labels its SessionStart hook would have written; `{ agent, why }` for an
+ * agent Revive won't record; or null (no agent, or one already on record).
+ * Every value comes from the agent's own process: its session file in this
+ * user's Claude folder, its live command line, the transcript `--resume`
+ * reads. A label is only asked whether a record exists, so none can make
+ * adopt record anything, and what it writes is read back through the same
+ * filters as a hook's (readRecord, vetRecord).
+ */
+function adoption(t, procs) {
+  if (readRecord(t.labels)) return null;
+  const agent = liveAgent(t);
+  if (!agent) return null;
+  const argv = t.foreground?.argv ?? [];
+  // `claude -p` typed in the terminal: it answers and quits, as for the hook.
+  if (isOneShot(agent, argv)) return { agent, why: "a one-shot run, with no session to bring back" };
+  // Only Claude Code's sessions/<pid>.json names its session for sure. The
+  // others are found by the newest file in their folder's store, good enough
+  // to show but not to keep as a record.
+  if (agent !== "claude") return { agent, why: "only a running Claude Code session can be remembered; start it again to record it" };
+  const found = runningSession(t, agent, procs.get(t.foreground?.pid)?.since);
+  if (!found || !validId(found.session)) return { agent, why: "Revive can't find its session from its files" };
+  const { session, cwd } = found;
+  if (found.why) return { agent, session, why: found.why };
+  // The folder a resume would `cd` to, checked now as it will be then.
+  if (vetRecord({ cwd }).cwdRefused) return { agent, session, why: `its folder ${tilde(cwd)} is missing, not yours, or writable by others` };
+  // The session was found in the folder this process's variables name, so the
+  // agent ran with the same ones: names only, as the hook records them.
+  const needs = needsOf(agent, argv, process.env);
+  return {
+    agent,
+    session,
+    fields: {
+      agent,
+      session,
+      cwd,
+      flags: JSON.stringify(carriedFlags(agent, argv)),
+      env: null,
+      needs: needs.length ? JSON.stringify(needs) : null,
+      // Only pi and omp name a session file.
+      transcript: null,
+      shell: t.pid ?? "",
+      since: procs.get(t.pid)?.since ?? null,
+      at: Date.now(),
+      ended: null,
+      failed: null,
+      resumed: null,
+    },
+  };
+}
+
+/**
+ * Adopts every local live terminal (or only `only`) running an agent nobody
+ * recorded. One session, one terminal: an id already on record elsewhere, or
+ * found in two terminals, would come back in two panes, so it is skipped.
+ * Returns one result per agent, written unless `dry`.
+ */
+async function adoptRunning({ only = null, dry = false } = {}) {
+  const all = await listTerminals();
+  const local = all.filter((t) => !t.address.includes("/") && (!only || t.address === only));
+  if (only && !local.length) throw new Error(`${only} is not a live terminal on this computer.`);
+  const pids = local.flatMap((t) => [t.pid, t.foreground?.pid]).filter(Boolean);
+  const procs = pids.length ? await processes([...new Set(pids)]) : new Map();
+  const results = [];
+  for (const t of local) {
+    const plan = adoption(t, procs);
+    if (only && !plan) throw new Error(readRecord(t.labels) ? `${only} already has a remembered session.` : `No agent session in ${only}.`);
+    if (plan) results.push({ address: t.address, where: t.labels?.where ?? null, ...plan });
+  }
+  const taken = new Set(all.map((t) => readRecord(t.labels)?.session).filter(Boolean));
+  const seen = new Map();
+  for (const r of results) if (r.fields) seen.set(r.session, (seen.get(r.session) ?? 0) + 1);
+  for (const r of results) {
+    if (!r.fields) continue;
+    r.why = taken.has(r.session) ? "its session is already remembered in another terminal"
+      : seen.get(r.session) > 1 ? "another terminal holds the same session" : undefined;
+    if (r.why) { delete r.fields; continue; }
+    if (dry) continue;
+    try { await label(r.address, labelArgs(r.fields)); }
+    catch (err) { r.why = `hc label failed: ${String(err?.stderr || err?.message || err).trim()}`; r.failed = true; delete r.fields; }
+  }
+  if (only && results[0]?.why) throw new Error(`Won't remember ${AGENTS[results[0].agent].name} in ${only}: ${results[0].why}.`);
+  return results;
+}
+
+/** What adopt did, or would do, as text: the sessions, and each agent left out with why. */
+function adoptReport(results, { dry = false } = {}) {
+  const at = (r) => (r.where ? `${r.address} (${r.where})` : r.address);
+  const done = results.filter((r) => r.fields);
+  const left = results.filter((r) => r.why);
+  const lines = [];
+  if (!done.length) lines.push("No running session to remember.");
+  else {
+    lines.push(`${dry ? "Would remember" : "Remembered"} ${done.length} running session${done.length === 1 ? "" : "s"}:`);
+    for (const r of done) {
+      lines.push(`  ${at(r)}  ${AGENTS[r.agent].name} ${shortId(r.session)}  ${tilde(r.fields.cwd)}`);
+      if (dry) lines.push(`    ${shJoin([HC, "label", r.address, ...labelArgs(r.fields)])}`);
+    }
+  }
+  if (left.length) lines.push("Not remembered:", ...left.map((r) => `  ${at(r)}  ${AGENTS[r.agent].name}: ${r.why}`));
+  return `${lines.join("\n")}\n`;
+}
+
+async function adopt(args) {
+  const dry = args.includes("--dry-run");
+  const only = args.find((a) => !a.startsWith("-")) ?? null;
+  const results = await adoptRunning({ only, dry });
+  process.stdout.write(adoptReport(results, { dry }));
+  if (results.some((r) => r.failed)) throw new Error("Some sessions weren't remembered: see above.");
+}
+
+/**
+ * `doctor`: what is installed, and how many running sessions `adopt` could
+ * remember (null when hc wasn't asked or failed). The dialog's setup is
+ * doctorReport() alone: it lists the sessions itself.
+ */
+async function doctor() {
+  let count = null;
+  try { count = await unremembered(); } catch { /* no hc, or no core: unknown, said as null */ }
+  process.stdout.write(JSON.stringify({ ...doctorReport(), unremembered: count }, null, 2) + "\n");
 }
 
 // ── install ─────────────────────────────────────────────────────────────────
@@ -727,7 +879,7 @@ function saveHooks(path, edit) {
   return save(path, JSON.stringify(after, null, 2) + "\n");
 }
 
-function install(args, remove = false) {
+async function install(args, remove = false) {
   const changed = [];
   const notes = [];
   for (const [key, h] of Object.entries(HOOK_TARGETS)) {
@@ -778,11 +930,37 @@ function install(args, remove = false) {
       }
     }
   }
+  // Last, the sessions already running that `adopt` could remember: said,
+  // never done. Install also runs on every update and from the dialog, and
+  // writes nothing but its own files.
+  if (!remove) {
+    try {
+      const n = await unremembered();
+      if (n) notes.push(unrememberedNote(n));
+    } catch (err) {
+      warnings.push(`Couldn't count the running sessions Revive doesn't remember: ${hcFailure(err)}. revive.mjs adopt --dry-run lists them.`);
+    }
+  }
   process.stdout.write(changed.length ? `${remove ? "Removed from" : "Updated"}:\n${changed.map((p) => `  ${p}`).join("\n")}\n` : "Nothing to change.\n");
   // On stdout, beside what did change: the dialog shows that output as its note.
   for (const line of notes) process.stdout.write(`${line}\n`);
   for (const line of warnings) process.stderr.write(`${line}\n`);
 }
+
+/**
+ * How many running sessions `adopt` would remember, or null when hc isn't
+ * asked: only while the terminal's herdr-core answers, since an `hc` that
+ * finds no core starts one.
+ */
+async function unremembered() {
+  if (!(await coreUp())) return null;
+  return (await adoptRunning({ dry: true })).filter((r) => r.fields).length;
+}
+
+const unrememberedNote = (n) => `${n} running Claude Code session${n === 1 ? " isn't" : "s aren't"} remembered yet: revive.mjs adopt --dry-run lists ${n === 1 ? "it" : "them"}, and revive.mjs adopt remembers ${n === 1 ? "it" : "them"}.`;
+
+/** Why an `hc` call failed, in one line. */
+const hcFailure = (err) => (err?.code === "ENOENT" ? `${HC} isn't on PATH` : String(err?.stderr || err?.message || err).trim().split("\n")[0]);
 
 /**
  * Links pi's or omp's extension to the mod's, or, with remove, takes out that
@@ -831,9 +1009,10 @@ const COMMANDS = {
   list: { run: list },
   resume: { run: resume },
   auto: { run: auto },
+  adopt: { run: adopt },
   install: { run: (a) => install(a) },
   uninstall: { run: (a) => install(a, true) },
-  doctor: { run: async () => process.stdout.write(JSON.stringify(doctorReport(), null, 2) + "\n") },
+  doctor: { run: doctor },
 };
 
 async function main() {

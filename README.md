@@ -61,6 +61,9 @@ What "experimental" means for each one is under [Limits](#limits).
 - **Resume by hand.** An agent that died under a shell that survived it (a crash, a `kill`)
   is listed as *Interrupted*, with a **Resume** button. One whose resume failed is listed
   as *Resume failed*, with a retry.
+- **Already running.** A Claude Code session started before Revive was installed can be
+  remembered with **Remember** in the dialog, or all at once with `revive.mjs adopt` (see
+  [Limits](#limits)).
 - **Per terminal.** Turn automatic resume off for one terminal in the dialog, or for a
   whole shell with `REVIVE_AUTO=0`.
 - **Nothing to run.** No background process. Sessions are remembered as labels on their
@@ -177,6 +180,11 @@ Each agent is set up only when it looks installed:
 
 Droid's and Cursor's hooks run `revive.mjs hook --agent droid|cursor`.
 
+Last, it says how many Claude Code sessions already running in your Herdr terminals
+aren't remembered (the ones started before Revive was installed), and points to
+`revive.mjs adopt`. It never remembers them itself: install writes only its own files.
+`doctor` gives the same count as `unremembered`.
+
 It also adds a short block to the file your shell reads at start:
 
 - **zsh:** `~/.zshrc`. zsh is asked where it is, so a `ZDOTDIR` set in `~/.zshenv` is
@@ -204,8 +212,10 @@ How it treats your files:
 ```sh
 node ~/.config/herdr-app/mods/revive/revive.mjs install --zsh --bash   # both shells
 node ~/.config/herdr-app/mods/revive/revive.mjs install --no-pi        # skip an agent: --no-codex, --no-pi, --no-omp, --no-droid, --no-cursor
+node ~/.config/herdr-app/mods/revive/revive.mjs adopt --dry-run        # what adopt would remember of the Claude Code sessions already running
+node ~/.config/herdr-app/mods/revive/revive.mjs adopt                  # remember them
 node ~/.config/herdr-app/mods/revive/revive.mjs uninstall              # take it all out
-node ~/.config/herdr-app/mods/revive/revive.mjs doctor                 # what is installed
+node ~/.config/herdr-app/mods/revive/revive.mjs doctor                 # what is installed, and how many running sessions aren't remembered
 ```
 
 ## Updates
@@ -290,8 +300,10 @@ REVIVE_DEBUG=1 zsh               # say why a shell did or didn't resume
 - Sessions started before Revive was installed have no record. The dialog still finds a
   running one from the files its agent writes (Claude Code: `sessions/<pid>.json`; Droid:
   the newest `~/.factory/sessions/<folder, dashed>/<id>.jsonl` written since it started;
-  Cursor: the newest `~/.cursor/chats/<md5 of the folder>/<id>/`), so it can be forked, but
-  it won't come back by itself.
+  Cursor: the newest `~/.cursor/chats/<md5 of the folder>/<id>/`), so it can be forked.
+  A running Claude Code session can be remembered with **Remember** in the dialog or with
+  `revive.mjs adopt`, once it has a message. Any other agent comes back by itself only after it has been restarted once:
+  Droid's and Cursor's newest file is a guess, good enough to show but not to keep.
 - An agent that died while its shell lived on is not resumed automatically, since nothing
   told the shell. Use **Resume** in the dialog.
 - Shells: zsh and bash. Other shells can run `revive.mjs check --shell $$` from their own
