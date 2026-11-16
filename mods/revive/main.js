@@ -80,6 +80,7 @@ const STATE = {
 const NEEDS_YOU = new Set(["lost", "interrupted", "failed"]);
 // Claude Code and pi write a session down only once it has a message; until then a resume finds nothing.
 const NO_MESSAGE = "This session has no message yet, so there is nothing to fork. Send it one first.";
+const NO_MESSAGE_UNRECORDED = "This session has no message yet, so there is nothing to fork or remember. Send it one first.";
 
 async function engine(args) {
   let r;
@@ -275,6 +276,24 @@ export default class Revive extends View {
     });
   }
 
+  /**
+   * Writes the record a Claude Code session started before Revive was
+   * installed never got, as its SessionStart would have (`revive.mjs adopt T`).
+   * The engine says why when it won't; the list then shows it as remembered.
+   */
+  remember(entry, cx) {
+    if (this.busy || !entry?.unrecorded || !entry.rememberable) return;
+    this.busy = true;
+    this.note = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await engine(["adopt", entry.address]);
+      this.busy = false;
+      if (!r.ok) this.note = { level: "error", text: r.error };
+      this.load(cx);
+    });
+  }
+
   setAuto(entry, on, cx) {
     this.note = null;
     cx.spawn(async (cx) => {
@@ -399,11 +418,17 @@ export default class Revive extends View {
     // Resume by hand that the engine would refuse: why, and what to run instead.
     const stuck = NEEDS_YOU.has(state) ? unresumable(rec) : null;
     const byHand = stuck?.needs ? needsCommand(rec) : null;
+    // Started before Revive was installed, and a Claude Code session (the
+    // engine says): Remember records it. No message yet: nothing to remember.
+    const remembers = Boolean(entry.unrecorded) && entry.rememberable != null;
+    const rememberable = remembers && entry.rememberable && entry.forkable !== false;
     const notes = [
-      entry.unrecorded ? (forks ? "Started before Revive was installed: it can be forked, but won't come back by itself."
-        : "Started before Revive was installed: it won't come back by itself.") : null,
+      remembers ? "Started before Revive was installed: it can be forked, but won't come back by itself until you remember it."
+        : entry.unrecorded ? (forks ? "Started before Revive was installed: it can be forked, but won't come back by itself."
+          : "Started before Revive was installed: it won't come back by itself.") : null,
       running && !forks ? `${agent?.name ?? rec.agent} can't fork a session.` : null,
-      forks && empty ? blocked ?? NO_MESSAGE : null,
+      forks && empty ? blocked ?? (remembers ? NO_MESSAGE_UNRECORDED : NO_MESSAGE) : null,
+      remembers && !entry.rememberable && entry.forkable !== false ? `Revive can't remember it: ${entry.rememberWhy}.` : null,
       stuck?.folder ? `Its folder ${tilde(stuck.folder)} is missing, not yours, or writable by others, so it isn't resumed here.` : null,
       stuck?.needs ? `It ran with ${stuck.needs.join(", ")}, which Revive doesn't carry. ${stuck.needs.some((n) => !n.startsWith("-")) ? "Set it in a shell" : "Fill in the folder"} and run:` : null,
     ].filter(Boolean);
@@ -427,6 +452,8 @@ export default class Revive extends View {
           .child(button(t, "fork-right", "Fork right", () => this.fork(entry, "right"), { kind: "solid", icon: "fork-right", hint: "F", disabled: empty }))
           .child(button(t, "fork-down", "Below", () => this.fork(entry, "down"), { icon: "fork-down", hint: "D", disabled: empty }))
           .child(button(t, "fork-tab", "New tab", () => this.fork(entry, "tab"), { icon: "fork-tab", hint: "T", disabled: empty })))
+        .when(remembers, (row) => row
+          .child(button(t, "remember-here", this.busy ? "Remembering…" : "Remember", (_e, cx) => this.remember(entry, cx), { disabled: this.busy || !rememberable })))
         .when(NEEDS_YOU.has(state), (row) => row
           .child(button(t, "resume-here", this.busy ? "Resuming…" : "Resume", (_e, cx) => this.resume(entry, cx), { kind: "solid", hint: "↵", disabled: this.busy || Boolean(stuck) }))
           .when(Boolean(byHand), (r) => r.child(button(t, "copy-command", "Copy command", (_e, cx) => {
@@ -478,6 +505,8 @@ export default class Revive extends View {
         .child(div().text_size(11.5).text_color(t.dim).child("Auto"))
         .child(toggle(t, `auto-${i}`, Boolean(rec.auto), (_e, cx) => this.setAuto(entry, !rec.auto, cx)))))
       .when(Boolean(entry.unrecorded), (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child("not remembered")))
+      .when(Boolean(entry.unrecorded) && Boolean(entry.rememberable), (el) => el
+        .child(button(t, `remember-${i}`, "Remember", (_e, cx) => this.remember(entry, cx), { kind: "ghost", small: true, disabled: this.busy })))
       .when(needs, (el) => el.child(button(t, `resume-${i}`, "Resume", (_e, cx) => this.resume(entry, cx), { kind: "solid", small: true, hint: null, disabled: this.busy || Boolean(unresumable(rec)) })));
   }
 

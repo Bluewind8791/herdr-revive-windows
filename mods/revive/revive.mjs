@@ -382,6 +382,10 @@ function describe(t, since, focus, fgSince = null) {
       entry.rec = { agent: live, session: found.session, cwd: found.cwd, flags: carriedFlags(live, t.foreground.argv), shell: t.pid, auto: true };
       entry.state = "running";
       entry.unrecorded = true;
+      // Only Claude Code's can be remembered (`adopt`): false, with why, while
+      // its start folder can't be told; absent for the others.
+      if (live === "claude") entry.rememberable = !found.why;
+      if (live === "claude" && found.why) entry.rememberWhy = found.why;
     }
   }
   // An agent running with nothing on record: the dialog still names it, and its folder.

@@ -61,6 +61,9 @@ What "experimental" means for each one is under [Limits](#limits).
 - **Resume by hand.** An agent that died under a shell that survived it (a crash, a `kill`)
   is listed as *Interrupted*, with a **Resume** button. One whose resume failed is listed
   as *Resume failed*, with a retry.
+- **Already running.** A Claude Code session started before Revive was installed can be
+  remembered with **Remember** in the dialog, or all at once with `revive.mjs adopt` (see
+  [Limits](#limits)).
 - **Per terminal.** Turn automatic resume off for one terminal in the dialog, or for a
   whole shell with `REVIVE_AUTO=0`.
 - **Nothing to run.** No background process. Sessions are remembered as labels on their
@@ -298,8 +301,8 @@ REVIVE_DEBUG=1 zsh               # say why a shell did or didn't resume
   running one from the files its agent writes (Claude Code: `sessions/<pid>.json`; Droid:
   the newest `~/.factory/sessions/<folder, dashed>/<id>.jsonl` written since it started;
   Cursor: the newest `~/.cursor/chats/<md5 of the folder>/<id>/`), so it can be forked.
-  A running Claude Code session can be remembered with `revive.mjs adopt`, once it has a
-  message. Any other agent comes back by itself only after it has been restarted once:
+  A running Claude Code session can be remembered with **Remember** in the dialog or with
+  `revive.mjs adopt`, once it has a message. Any other agent comes back by itself only after it has been restarted once:
   Droid's and Cursor's newest file is a guess, good enough to show but not to keep.
 - An agent that died while its shell lived on is not resumed automatically, since nothing
   told the shell. Use **Resume** in the dialog.

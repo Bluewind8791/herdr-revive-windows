@@ -105,7 +105,13 @@ latest release* when a newer release is out. To do it:
       can't be forked from the dialog either: *It ran with CLAUDE_CONFIG_DIR: fork it
       from its own shell.* Neither can one whose folder failed the check: *Its folder is
       missing, not yours, or writable by others.* A session started before Revive was
-      installed says it can be forked but won't come back by itself. An agent running
+      installed says it can be forked but won't come back by itself; for Claude Code, *…
+      until you remember it*, with an outline **Remember** after the Fork buttons
+      (`revive.mjs adopt T`; *Remembering…* while it runs, and the engine's reason in the
+      note line when it won't). With no message yet it says *nothing to fork or remember*
+      and **Remember** is disabled too; when the engine can't tell the folder it started
+      in, *Revive can't remember it:* and the engine's reason (`rememberWhy`). No key: `R`
+      is Refresh. An agent running
       with nothing on record gets the same card without an id or buttons, and a note
       that Revive has no record of it, so it can't be forked or brought back; for Codex
       the note adds that Codex records a session at its first message, and not at all
@@ -122,7 +128,8 @@ latest release* when a newer release is out. To do it:
       focuses that terminal.
     - **OTHER SESSIONS**: the rest, the same rows (50px) without the fill, border or
       **Resume**, 2px apart. A session found through its pid but not remembered says
-      *not remembered* instead of the switch.
+      *not remembered* instead of the switch, and, when the engine says it can be
+      (`rememberable`), a small ghost **Remember** that does what the card's does.
   - **Nothing at all** (no session remembered anywhere, no agent in the focused
     terminal): in place of the sections, centered, a 52px `raised` tile with the logo in
     `muted`, **No sessions remembered yet** (14px semibold), *Start an agent in a Herdr
@@ -393,6 +400,10 @@ reboot with either agent.
   this process's folder. Otherwise it says `null` and the fork is let through, since an
   agent started with a `CLAUDE_CONFIG_DIR` the app doesn't have keeps its transcripts
   elsewhere. A folder or variable named in a label is never taken as proof.
+- For a running Claude Code session nobody recorded, `list` also says `rememberable`:
+  true when `adopt` can tell the folder it started in, false with `rememberWhy` when it
+  can't. Other agents get neither, and the dialog offers no **Remember** for them. The
+  dialog's **Remember** runs `adopt T`, which checks everything again.
 - `check` marks the terminal (`shell`, `since`, `resumed`) before printing, so a second
   shell can't resume the same session again.
 - The shell block runs what `check` printed at the first prompt (zsh: a one-time `precmd`

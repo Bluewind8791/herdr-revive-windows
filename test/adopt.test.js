@@ -267,6 +267,25 @@ test("the dialog's list gives a moved session the folder it started in, for Fork
   assert.equal(entry.rec.cwd, start);
 });
 
+test("the dialog's list says which sessions nobody recorded Remember can record", () => {
+  const w = world();
+  const work = w.folder("work");
+  w.transcript(A, work);
+  w.terminal({ argv: ["claude"], cwd: work, session: A });
+  w.terminal({ argv: ["claude"], cwd: work, session: B });
+  const store = join(w.home, ".factory", "sessions", dashed(work));
+  mkdirSync(store, { recursive: true });
+  writeFileSync(join(store, `${D}.jsonl`), "{}\n");
+  w.terminal({ argv: ["droid"], cwd: work });
+  const [ready, empty, droid] = JSON.parse(execFileSync("node", [ENGINE, "list"], { encoding: "utf8", env: w.env() })).entries;
+  assert.equal(ready.rememberable, true);
+  assert.equal(ready.rememberWhy, undefined);
+  assert.equal(empty.rememberable, false);
+  assert.equal(empty.rememberWhy, "it has no message yet, so there is nothing to resume");
+  assert.equal(droid.unrecorded, true);
+  assert.equal(droid.rememberable, undefined, "only Claude Code's");
+});
+
 test("the dialog's list shows an adopted session as remembered", () => {
   const w = world();
   const work = w.folder("work");
