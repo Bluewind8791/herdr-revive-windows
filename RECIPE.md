@@ -31,8 +31,9 @@ Cursor are built from their docs and not tested end to end yet.
    an agent. pi loads its extension the next time it starts or at `/reload`, omp only
    the next time it starts.
 6. Run `node ~/.config/herdr-app/mods/revive/revive.mjs doctor` and report what it shows.
-7. New sessions are remembered from now on. Sessions already running are not. For the
-   Claude Code ones, run `node ~/.config/herdr-app/mods/revive/revive.mjs adopt --dry-run`
+7. New sessions are remembered from now on. Sessions already running are not: `install`
+   and `doctor` (`unremembered`) say how many Claude Code ones `adopt` could remember.
+   If there are any, run `node ~/.config/herdr-app/mods/revive/revive.mjs adopt --dry-run`
    and show the person what it lists; `adopt` remembers them if they want. Any other
    agent comes back by itself only after it is restarted once.
 
@@ -410,6 +411,15 @@ reboot with either agent.
   finds it, or the one it is in now when that can't be told.
 - pi's and omp's transcript check is the recorded session file: it exists, or the session never got
   a message. A record without one is let through.
+- Install ends by counting the running sessions `adopt` could remember (`adopt
+  --dry-run`), and says how many, pointing to `adopt`. It never adopts: it runs on every
+  update and from the dialog's **Install**, and changes nothing but its own files.
+  Uninstall doesn't count. In a Herdr terminal it asks `hc` only while that terminal's
+  herdr-core answers (an `hc` that finds no core starts one); elsewhere (the dialog's
+  **Install**) as `list` does. A failure is a warning; the install still succeeds.
+- `doctor` adds the same count as `unremembered`, or null when `hc` wasn't asked or
+  failed. The dialog's setup (`list --setup`) leaves it out: the dialog lists the
+  sessions itself.
 - Install writes an agent's hooks only into the file it reads now, and takes Revive's
   out of every other file it may be in (Droid's `settings.json` once a `hooks.json`
   exists). The shell block works the same way: one file per shell, and a bash block an

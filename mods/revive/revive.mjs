@@ -554,6 +554,17 @@ async function adopt(args) {
   if (results.some((r) => r.failed)) throw new Error("Some sessions weren't remembered: see above.");
 }
 
+/**
+ * `doctor`: what is installed, and how many running sessions `adopt` could
+ * remember (null when hc wasn't asked or failed). The dialog's setup is
+ * doctorReport() alone: it lists the sessions itself.
+ */
+async function doctor() {
+  let count = null;
+  try { count = await unremembered(); } catch { /* no hc, or no core: unknown, said as null */ }
+  process.stdout.write(JSON.stringify({ ...doctorReport(), unremembered: count }, null, 2) + "\n");
+}
+
 // ── install ─────────────────────────────────────────────────────────────────
 
 /**
@@ -864,7 +875,7 @@ function saveHooks(path, edit) {
   return save(path, JSON.stringify(after, null, 2) + "\n");
 }
 
-function install(args, remove = false) {
+async function install(args, remove = false) {
   const changed = [];
   const notes = [];
   for (const [key, h] of Object.entries(HOOK_TARGETS)) {
@@ -915,11 +926,37 @@ function install(args, remove = false) {
       }
     }
   }
+  // Last, the sessions already running that `adopt` could remember: said,
+  // never done. Install also runs on every update and from the dialog, and
+  // writes nothing but its own files.
+  if (!remove) {
+    try {
+      const n = await unremembered();
+      if (n) notes.push(unrememberedNote(n));
+    } catch (err) {
+      warnings.push(`Couldn't count the running sessions Revive doesn't remember: ${hcFailure(err)}. revive.mjs adopt --dry-run lists them.`);
+    }
+  }
   process.stdout.write(changed.length ? `${remove ? "Removed from" : "Updated"}:\n${changed.map((p) => `  ${p}`).join("\n")}\n` : "Nothing to change.\n");
   // On stdout, beside what did change: the dialog shows that output as its note.
   for (const line of notes) process.stdout.write(`${line}\n`);
   for (const line of warnings) process.stderr.write(`${line}\n`);
 }
+
+/**
+ * How many running sessions `adopt` would remember, or null when hc isn't
+ * asked: only while the terminal's herdr-core answers, since an `hc` that
+ * finds no core starts one.
+ */
+async function unremembered() {
+  if (!(await coreUp())) return null;
+  return (await adoptRunning({ dry: true })).filter((r) => r.fields).length;
+}
+
+const unrememberedNote = (n) => `${n} running Claude Code session${n === 1 ? " isn't" : "s aren't"} remembered yet: revive.mjs adopt --dry-run lists ${n === 1 ? "it" : "them"}, and revive.mjs adopt remembers ${n === 1 ? "it" : "them"}.`;
+
+/** Why an `hc` call failed, in one line. */
+const hcFailure = (err) => (err?.code === "ENOENT" ? `${HC} isn't on PATH` : String(err?.stderr || err?.message || err).trim().split("\n")[0]);
 
 /**
  * Links pi's or omp's extension to the mod's, or, with remove, takes out that
@@ -971,7 +1008,7 @@ const COMMANDS = {
   adopt: { run: adopt },
   install: { run: (a) => install(a) },
   uninstall: { run: (a) => install(a, true) },
-  doctor: { run: async () => process.stdout.write(JSON.stringify(doctorReport(), null, 2) + "\n") },
+  doctor: { run: doctor },
 };
 
 async function main() {

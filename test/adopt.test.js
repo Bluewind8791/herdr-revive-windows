@@ -24,7 +24,7 @@ const SHELL = process.pid;
 const since = execFileSync("ps", ["-o", "lstart=", "-p", String(SHELL)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } }).trim().split(/\s+/).join(" ");
 
 const base = { ...process.env };
-for (const k of ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "HC_TERMINAL_ID", "REVIVE_SHELL"]) delete base[k];
+for (const k of ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "REVIVE_SHELL", "ZDOTDIR"]) delete base[k];
 
 /** A temporary home, a fake hc and helpers to add terminals and agent files. */
 function world() {
@@ -280,4 +280,64 @@ test("the dialog's list shows an adopted session as remembered", () => {
   assert.equal(entry.state, "running");
   assert.deepEqual(entry.rec.flags, ["--model", "opus"]);
   assert.equal(entry.rec.auto, true);
+});
+
+// ── install and doctor ──────────────────────────────────────────────────────
+
+test("install says how many running sessions aren't remembered, and remembers none", () => {
+  const w = world();
+  const work = w.folder("work");
+  w.transcript(A, work);
+  w.transcript(B, work);
+  w.terminal({ argv: ["claude", "--model", "opus"], cwd: work, session: A });
+  w.terminal({ argv: ["claude"], cwd: work, session: B });
+  w.terminal({ argv: ["claude"], cwd: work, session: C, labels: { "revive.agent": "claude", "revive.session": C } });
+  w.terminal({ argv: ["codex"], cwd: work });
+  const note = "2 running Claude Code sessions aren't remembered yet: revive.mjs adopt --dry-run lists them, and revive.mjs adopt remembers them.\n";
+  const r = w.run(["install", "--no-shell"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^Updated:\n {2}\S+settings\.json\n/, "the hooks first");
+  assert.ok(r.stdout.endsWith(note), r.stdout);
+  assert.deepEqual(w.calls(), [], "nothing written to any terminal");
+  // Again: nothing to change, and the same count.
+  assert.equal(w.run(["install", "--no-shell"]).stdout, `Nothing to change.\n${note}`);
+  w.run(["adopt", "t1"]);
+  assert.match(w.run(["install", "--no-shell"]).stdout, /^Nothing to change\.\n1 running Claude Code session isn't remembered yet: revive\.mjs adopt --dry-run lists it, and revive\.mjs adopt remembers it\.\n$/);
+  w.run(["adopt"]);
+  assert.equal(w.run(["install", "--no-shell"]).stdout, "Nothing to change.\n", "nothing left to say");
+  assert.doesNotMatch(w.run(["uninstall", "--no-shell"]).stdout, /remember/);
+});
+
+test("doctor says how many running sessions aren't remembered", () => {
+  const w = world();
+  const work = w.folder("work");
+  w.transcript(A, work);
+  w.terminal({ argv: ["claude"], cwd: work, session: A });
+  const doctor = (extra) => JSON.parse(w.run(["doctor"], extra).stdout);
+  assert.equal(doctor().unremembered, 1);
+  assert.equal(doctor({ REVIVE_HC: join(w.root, "no-such-hc") }).unremembered, null, "no hc: unknown");
+  assert.deepEqual(w.calls(), []);
+});
+
+test("install doesn't ask hc while the terminal's core is down, and installs without hc", () => {
+  const w = world();
+  const work = w.folder("work");
+  w.transcript(A, work);
+  w.terminal({ argv: ["claude"], cwd: work, session: A });
+  // An hc that finds no core starts one: with the socket gone, it isn't asked.
+  const log = join(w.root, "asked");
+  const spy = join(w.root, "spy-hc");
+  writeFileSync(spy, `#!/bin/sh\necho "$@" >> ${JSON.stringify(log)}\nexec ${JSON.stringify(w.hc)} "$@"\n`);
+  chmodSync(spy, 0o755);
+  const down = w.run(["install", "--no-shell"], { REVIVE_HC: spy, HC_TERMINAL_SOCKET: join(w.root, "gone.sock") });
+  assert.equal(down.status, 0, down.stderr);
+  assert.equal(down.stderr, "");
+  assert.doesNotMatch(down.stdout, /remember/);
+  assert.equal(existsSync(log), false, "hc never asked");
+  assert.equal(JSON.parse(w.run(["doctor"], { REVIVE_HC: spy, HC_TERMINAL_SOCKET: join(w.root, "gone.sock") }).stdout).unremembered, null);
+  assert.equal(existsSync(log), false, "nor by doctor");
+  const none = w.run(["install", "--no-shell"], { REVIVE_HC: join(w.root, "no-such-hc") });
+  assert.equal(none.status, 0);
+  assert.match(none.stdout, /Nothing to change/);
+  assert.equal(none.stderr, `Couldn't count the running sessions Revive doesn't remember: ${join(w.root, "no-such-hc")} isn't on PATH. revive.mjs adopt --dry-run lists them.\n`);
 });

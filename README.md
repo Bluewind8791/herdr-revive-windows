@@ -177,6 +177,11 @@ Each agent is set up only when it looks installed:
 
 Droid's and Cursor's hooks run `revive.mjs hook --agent droid|cursor`.
 
+Last, it says how many Claude Code sessions already running in your Herdr terminals
+aren't remembered (the ones started before Revive was installed), and points to
+`revive.mjs adopt`. It never remembers them itself: install writes only its own files.
+`doctor` gives the same count as `unremembered`.
+
 It also adds a short block to the file your shell reads at start:
 
 - **zsh:** `~/.zshrc`. zsh is asked where it is, so a `ZDOTDIR` set in `~/.zshenv` is
@@ -207,7 +212,7 @@ node ~/.config/herdr-app/mods/revive/revive.mjs install --no-pi        # skip an
 node ~/.config/herdr-app/mods/revive/revive.mjs adopt --dry-run        # what adopt would remember of the Claude Code sessions already running
 node ~/.config/herdr-app/mods/revive/revive.mjs adopt                  # remember them
 node ~/.config/herdr-app/mods/revive/revive.mjs uninstall              # take it all out
-node ~/.config/herdr-app/mods/revive/revive.mjs doctor                 # what is installed
+node ~/.config/herdr-app/mods/revive/revive.mjs doctor                 # what is installed, and how many running sessions aren't remembered
 ```
 
 ## Updates
