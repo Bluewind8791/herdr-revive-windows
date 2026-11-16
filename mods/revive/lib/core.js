@@ -297,7 +297,7 @@ export const AGENTS = {
     match: (word) => {
       const name = base(word);
       if (name === "cursor-agent") return true;
-      const dirs = String(word).split("/").slice(0, -1);
+      const dirs = String(word).split(/[\\/]/).slice(0, -1);
       return ["agent", "node", "index.js"].includes(name) && dirs.some((d) => /^cursor(-agent)?$/i.test(d));
     },
     apps: ["cursor", "cursor-agent"],
@@ -323,7 +323,8 @@ export const AGENTS = {
   },
 };
 
-const base = (path) => String(path ?? "").split("/").pop();
+// Windows: `C:\Users\me\.local\bin\claude.exe` is `claude` too.
+const base = (path) => String(path ?? "").split(/[\\/]/).pop().replace(/\.(exe|cmd|bat|ps1)$/i, "");
 const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
 /** Whether one command-line word is this agent's program. */
@@ -372,7 +373,7 @@ export function hookPayload(payload) {
 }
 
 function payloadAgent(p) {
-  const path = String(p.transcript_path ?? "");
+  const path = String(p.transcript_path ?? "").replace(/\\/g, "/");
   if (path.includes("/.codex/")) return "codex";
   if (path.includes("/.omp/")) return "omp";
   if (path.includes("/.pi/")) return "pi";
@@ -424,6 +425,9 @@ export function carriedFlags(key, argv = []) {
       out.push(word, String(argv[++i]));
       continue;
     }
+    // A switch once is enough: a wrapper that adds it (a PowerShell `claude`
+    // function) would otherwise add one more at every resume.
+    if (n === 0 && out.includes(word)) continue;
     out.push(word);
     if (n === 2) while (i + 1 < argv.length && accepts(spec, argv[i + 1])) out.push(String(argv[++i]));
   }
@@ -805,6 +809,85 @@ export function resumeScript(rec, engine) {
     ...body,
     `}; fi`,
     `unset __revive_tty`,
+  ].join("\n");
+}
+
+// ── Windows PowerShell ──────────────────────────────────────────────────────
+// Herdr starts Windows terminals as `powershell.exe -NoExit` (or pwsh), so the
+// resume runs as PowerShell. Kept ASCII: Windows PowerShell 5.1 reads a
+// profile without a BOM in the system code page.
+
+/** One word for PowerShell, quoted only when it needs to be. */
+export function psQuote(word) {
+  const s = String(word);
+  return /^[A-Za-z0-9_./\\:=+-]+$/.test(s) ? s : `'${s.replace(/'/g, "''")}'`;
+}
+
+/** A PowerShell string literal, always quoted. */
+const psString = (s) => `'${String(s).replace(/'/g, "''")}'`;
+
+/** printfLine for PowerShell: one `Write-Host` of styled parts, each `[style, text]`. */
+export function psNoteLine(parts) {
+  const words = parts.flatMap(([style, text]) => (style
+    ? ["[char]27", psString(`${SGR[style].slice(4)}${text}`), "[char]27", psString("[0m")]
+    : [psString(text)]));
+  return `Write-Host (${words.join(" + ")})`;
+}
+
+/**
+ * The resume as PowerShell statements: the folder, then the agent, as
+ * resumeLine builds them. `Set-Location -ErrorAction Stop` stops the line when
+ * the folder is gone, as `cd … &&` does. `unattended` drops the same flags and
+ * hands the agent REVIVE_RESUME, set for the agent only and taken out after.
+ */
+function psParts(rec, kind = "resume", { unattended = false } = {}) {
+  const argv = command(rec, kind, { unattended });
+  if (!argv) return null;
+  const context = unattended ? JSON.stringify({ agent: rec.agent, session: rec.session, flags: safeFlags(rec.agent, rec.flags ?? []) }) : null;
+  return {
+    cd: rec.cwd ? `Set-Location -LiteralPath ${psQuote(rec.cwd)} -ErrorAction Stop` : null,
+    set: context ? [`$env:REVIVE_RESUME = ${psString(context)}`] : [],
+    unset: context ? ["Remove-Item Env:REVIVE_RESUME -ErrorAction SilentlyContinue"] : [],
+    run: `& ${argv.map(psQuote).join(" ")}`,
+  };
+}
+
+/** `Set-Location … ; & claude … --resume <id>`, one line typed into a PowerShell prompt, or "". */
+export function psResumeLine(rec, kind = "resume") {
+  const p = psParts(rec, kind);
+  if (!p) return "";
+  return [p.cd, p.run].filter(Boolean).join("; ");
+}
+
+/** What the recovered PowerShell runs (Invoke-Expression), like resumeScript for a POSIX shell. */
+export function psResumeScript(rec, engine) {
+  const p = psParts(rec, "resume", { unattended: true });
+  if (!p) return "";
+  const name = AGENTS[rec.agent].name;
+  const { dropped } = attendedFlags(rec.agent, safeFlags(rec.agent, rec.flags ?? []));
+  // ASCII only: the console's font may not have the arrow the POSIX note uses.
+  const notes = [psNoteLine([
+    ["accent", "Revive"], [null, "  resuming "], ["strong", name], [null, ` session ${shortId(rec.session)}`],
+    ["dim", " - $env:REVIVE_AUTO=0 skips this"],
+  ])];
+  if (dropped.length) {
+    notes.push(psNoteLine([["caution", `  without ${dropped.join(", ")} (only a resume from the Revive dialog keeps ${dropped.length > 1 ? "them" : "it"})`]]));
+  }
+  return [
+    ...notes,
+    `$__revive_t = [DateTime]::UtcNow`,
+    `try {`,
+    ...(p.cd ? [`  ${p.cd}`] : []),
+    ...p.set.map((l) => `  ${l}`),
+    `  ${p.run}`,
+    `  if ($LASTEXITCODE -ne 0 -and ([DateTime]::UtcNow - $__revive_t).TotalSeconds -lt 15) { & node ${psQuote(engine)} failed }`,
+    `} catch {`,
+    `  Write-Host "Revive: $_"`,
+    `  & node ${psQuote(engine)} failed`,
+    `} finally {`,
+    ...p.unset.map((l) => `  ${l}`),
+    `  Remove-Variable __revive_t -ErrorAction SilentlyContinue`,
+    `}`,
   ].join("\n");
 }
 

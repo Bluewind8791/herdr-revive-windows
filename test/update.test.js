@@ -14,6 +14,8 @@ function fake({ release = { tag_name: "v0.6.0", html_url: `https://github.com/${
     setShared: (k, v) => { store.set(k, v); return null; },
     fetch: async (url, opts) => { calls.push({ url, opts }); return { ok, json: async () => release }; },
     now: () => clock,
+    // The Windows fork turns the check off by default (lib/update.js): the tests ask for it.
+    check: true,
     version,
   });
   return { u, store, calls, tick: (ms) => { clock += ms; } };
@@ -93,6 +95,7 @@ test("a failed try is asked again an hour later, not a day later", async () => {
     setShared: (k, v) => { store.set(k, v); return null; },
     fetch: async () => { asked++; if (!online) throw new Error("offline"); return { ok: true, json: async () => ({ tag_name: "v9.0.0" }) }; },
     now: () => clock,
+    check: true,
     version: "0.5.2",
   });
   await u.check();

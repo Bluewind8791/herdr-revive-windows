@@ -17,7 +17,7 @@
 //                                 nobody recorded (started before Revive was
 //                                 installed), or only T's; --dry-run says what
 //                                 it would write
-//   revive.mjs install [--zsh] [--bash] [--no-shell] [--no-codex] [--no-pi] [--no-omp] [--no-droid] [--no-cursor]
+//   revive.mjs install [--zsh] [--bash] [--powershell] [--pwsh] [--no-shell] [--no-codex] [--no-pi] [--no-omp] [--no-droid] [--no-cursor]
 //   revive.mjs uninstall
 //   revive.mjs doctor             what is installed, as JSON
 //
@@ -27,19 +27,21 @@ import { execFile, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync, copyFileSync, mkdirSync, renameSync, realpathSync, rmSync, statSync, lstatSync, symlinkSync, chmodSync } from "node:fs";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   AGENTS, agentKey, carriedFlags, safeFlags, hookOwner, hookPayload, endAction, isOneShot, readRecord, labelArgs, clearArgs, resumedArgs,
   stateOf, shouldResume, ownShell, promptShell, idleWrappedShell, resumeScript, resumeLine, shQuote, shJoin, validId, needsOf, shortId, needsHint, unresumable,
-  printfLine,
+  printfLine, psQuote, psResumeLine, psResumeScript, psNoteLine,
 } from "./lib/core.js";
 import { agentDirs, claudeStartFolder, findSession } from "./lib/sessions.js";
 
 const run = promisify(execFile);
 export const ENGINE = fileURLToPath(import.meta.url);
 const HC = process.env.REVIVE_HC || "hc";
+// Windows: no `ps`, no zsh or bash; Herdr's terminals run PowerShell.
+const WIN = process.platform === "win32";
 
 // ── herdr-core ──────────────────────────────────────────────────────────────
 
@@ -86,11 +88,37 @@ async function listTerminals() {
  * own report, which only counts while something other than the terminal's
  * shell is in the foreground: a report outlives the agent that sent it. A
  * shell at its own prompt ignores the report; one running a script keeps it.
+ * Returned as { key, pid, argv }. On Windows herdr-core reports the terminal's shell as its foreground even
+ * while an agent runs in it, so the agent is looked for among the shell's
+ * children in the process table instead.
  */
-function liveAgent(t) {
+function agentProc(t, table = null) {
   const fg = t.foreground;
+  if (WIN && table && t.pid) {
+    // A terminal opened on the agent itself (a fork): the program is the agent.
+    const own = agentKey(null, fg?.argv ?? t.argv ?? []);
+    if (own) return { key: own, pid: t.pid, argv: fg?.argv ?? t.argv };
+    for (const [pid, proc] of table) {
+      if (proc.ppid !== t.pid) continue;
+      const key = agentKey(null, proc.argv);
+      if (key) return { key, pid, argv: proc.argv };
+    }
+    return null;
+  }
   if (!fg?.argv) return null;
-  return agentKey(null, fg.argv) ?? (fg.pid && fg.pid !== t.pid && !promptShell(fg.argv) ? agentKey(t.status?.app) : null);
+  const key = agentKey(null, fg.argv) ?? (fg.pid && fg.pid !== t.pid && !promptShell(fg.argv) ? agentKey(t.status?.app) : null);
+  return key ? { key, pid: fg.pid ?? null, argv: fg.argv } : null;
+}
+
+/** The key of the agent agentProc finds, or null. */
+const liveAgent = (t, table = null) => agentProc(t, table)?.key ?? null;
+
+/** Windows: what the terminal's shell runs, a child that isn't the console host, or null. */
+function busyWith(t, table) {
+  for (const proc of table.values()) {
+    if (proc.ppid === t.pid && !/conhost/i.test(proc.argv[0] ?? "")) return proc.argv[0] ?? "another program";
+  }
+  return null;
 }
 
 // ── hooks ───────────────────────────────────────────────────────────────────
@@ -123,6 +151,7 @@ export function parseProcesses(text) {
 // One -o per column: procps-ng 3.3 (Amazon Linux 2) reads "pid=,ppid=,..." as a
 // single pid column titled ",ppid=,...", which leaves ppid and argv empty.
 async function processes(pids = null) {
+  if (WIN) return winProcesses();
   const args = pids ? ["-o", "pid=", "-o", "ppid=", "-o", "lstart=", "-o", "args=", "-p", pids.join(",")] : ["-A", "-o", "pid=", "-o", "ppid=", "-o", "lstart=", "-o", "args="];
   try {
     const { stdout } = await run("ps", args, { maxBuffer: 16 * 1024 * 1024, env: { ...process.env, LC_ALL: "C" } });
@@ -131,6 +160,57 @@ async function processes(pids = null) {
     // ps exits 1 when none of the asked pids exist.
     return parseProcesses(err?.stdout ?? "");
   }
+}
+
+/**
+ * A Windows command line split into words, the way CommandLineToArgvW does:
+ * whitespace outside quotes separates; 2n backslashes before a quote are n
+ * and the quote toggles; 2n+1 are n and a literal quote.
+ */
+export function splitWinArgs(line) {
+  const out = [];
+  let word = "", inWord = false, quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === "\\") {
+      let n = 0;
+      while (line[i] === "\\") { n++; i++; }
+      if (line[i] === '"') {
+        word += "\\".repeat(n >> 1);
+        if (n % 2) word += '"'; else quoted = !quoted;
+      } else { word += "\\".repeat(n); i--; }
+      inWord = true;
+    } else if (c === '"') { quoted = !quoted; inWord = true; }
+    else if ((c === " " || c === "\t") && !quoted) { if (inWord) out.push(word); word = ""; inWord = false; }
+    else { word += c; inWord = true; }
+  }
+  if (inWord) out.push(word);
+  return out;
+}
+
+/** `pid<TAB>ppid<TAB>start<TAB>command line` lines, as winProcesses' PowerShell prints them. */
+export function parseWinProcesses(text) {
+  const table = new Map();
+  for (const line of text.split(/\r?\n/)) {
+    const [pid, ppid, since, ...rest] = line.split("\t");
+    if (!Number(pid)) continue;
+    table.set(Number(pid), { ppid: Number(ppid), since: since || null, argv: splitWinArgs(rest.join("\t")) });
+  }
+  return table;
+}
+
+// Start times in UTC to the millisecond: they tell a new shell from an old one
+// that had the same pid before a reboot. UTF-8 out: command lines may hold any folder name.
+const WIN_PS = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-CimInstance Win32_Process | ForEach-Object { "
+  + "$d = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ') } else { '' }; "
+  + "[Console]::Out.WriteLine(\"$($_.ProcessId)`t$($_.ParentProcessId)`t$d`t$($_.CommandLine)\") }";
+
+async function winProcesses() {
+  try {
+    const { stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WIN_PS],
+      { maxBuffer: 16 * 1024 * 1024, encoding: "utf8", windowsHide: true, timeout: 8000 });
+    return parseWinProcesses(stdout);
+  } catch { return new Map(); }
 }
 
 /** When a terminal's program started, or null. */
@@ -198,7 +278,7 @@ async function hook(args = []) {
       env: null,
       needs: needs.length ? JSON.stringify(needs) : null,
       // pi and omp keep sessions where their flags, environment or settings say: the file named is the one to check.
-      transcript: EXTENSION_AGENTS.includes(key) && String(payload.transcript ?? "").startsWith("/") ? payload.transcript : null,
+      transcript: EXTENSION_AGENTS.includes(key) && isAbsolute(String(payload.transcript ?? "")) ? payload.transcript : null,
       shell: terminal.pid ?? "",
       since: table.get(terminal.pid)?.since ?? null,
       at: same ? rec.at ?? Date.now() : Date.now(),
@@ -240,7 +320,8 @@ export function vetRecord(rec, { uid = process.getuid?.(), gid = process.getgid?
     const real = realpathSync(rec.cwd);
     const st = statSync(real);
     const groupOk = (st.mode & 0o020) === 0 || (uid !== undefined && st.gid === gid && gid === uid);
-    if (st.isDirectory() && (uid === undefined || st.uid === uid) && (st.mode & 0o002) === 0 && groupOk) return { ...rec, cwd: real };
+    // Windows: Node reports every folder as 0666 owned by uid 0, so only "a folder" is checked.
+    if (st.isDirectory() && (WIN || ((uid === undefined || st.uid === uid) && (st.mode & 0o002) === 0 && groupOk))) return { ...rec, cwd: real };
   } catch { /* gone */ }
   return { ...rec, cwd: null, cwdRefused: rec.cwd };
 }
@@ -295,8 +376,9 @@ async function check(args) {
   if (!verdict.go && verdict.hint) {
     // Said once: marked failed, the next shell stays quiet; the dialog offers it by hand.
     await label(t, labelArgs({ failed: Date.now() }));
-    process.stdout.write(`${printfLine([
-      ["warn", "↻ Revive"], [null, `  not resuming ${AGENTS[rec.agent].name} session ${shortId(rec.session)}: ${verdict.why}.`],
+    // Windows: PowerShell runs it, and the console's font may not have the arrow.
+    process.stdout.write(`${(WIN ? psNoteLine : printfLine)([
+      ["warn", WIN ? "Revive" : "↻ Revive"], [null, `  not resuming ${AGENTS[rec.agent].name} session ${shortId(rec.session)}: ${verdict.why}.`],
       ["dim", " Resume it by hand from the Revive dialog."],
     ])}\n`);
     return;
@@ -305,7 +387,7 @@ async function check(args) {
   if (!hasTranscript(rec)) { debug("the session has no transcript; forgot it"); await label(t, clearArgs()); return; }
   // Mark it first: a second shell started from this one must not resume it again.
   await label(t, resumedArgs({ pid, since }));
-  process.stdout.write(resumeScript(rec, ENGINE) + "\n");
+  process.stdout.write((WIN ? psResumeScript(rec, ENGINE) : resumeScript(rec, ENGINE)) + "\n");
 }
 
 async function failed() {
@@ -347,13 +429,13 @@ const startMs = (since) => { const ms = Date.parse(since ?? ""); return Number.i
  * The session a live agent nobody recorded holds, from the files it writes
  * (lib/sessions.js), and the folder to resume or fork it in: `{ session, cwd }`,
  * with `why` when Claude Code's start folder can't be told (`cwd` is then the
- * one it runs in now), or null.
+ * one it runs in now), or null. `pid`: the agent's process (agentProc).
  */
-function runningSession(t, agent, fgSince) {
-  if (!t.foreground?.pid) return null;
+function runningSession(t, agent, pid, fgSince) {
+  if (!pid) return null;
   const dirs = agentDirs();
-  const now = t.foreground.cwd ?? t.cwd ?? null;
-  const session = findSession(agent, { dirs, pid: t.foreground.pid, cwd: now, startedMs: startMs(fgSince) });
+  const now = t.foreground?.cwd ?? t.cwd ?? null;
+  const session = findSession(agent, { dirs, pid, cwd: now, startedMs: startMs(fgSince) });
   if (!session) return null;
   // Claude Code files a conversation under the folder it started in, and
   // finds it only from there; the agent may have moved since.
@@ -362,9 +444,11 @@ function runningSession(t, agent, fgSince) {
   return start.why ? { session, cwd: now, why: start.why } : { session, cwd: start.cwd };
 }
 
-function describe(t, since, focus, fgSince = null) {
+function describe(t, since, focus, procs) {
   const rec = loadRecord(t.labels);
-  const live = liveAgent(t);
+  const agent = agentProc(t, procs);
+  const live = agent?.key ?? null;
+  const fgSince = agent?.pid ? procs.get(agent.pid)?.since ?? null : null;
   const entry = {
     address: t.address,
     where: t.labels?.where ?? null,
@@ -377,9 +461,9 @@ function describe(t, since, focus, fgSince = null) {
   // A live agent nobody recorded yet (started before Revive was installed),
   // found from the files it writes (lib/sessions.js).
   if (!rec && live) {
-    const found = runningSession(t, live, fgSince);
+    const found = runningSession(t, live, agent.pid, fgSince);
     if (found) {
-      entry.rec = { agent: live, session: found.session, cwd: found.cwd, flags: carriedFlags(live, t.foreground.argv), shell: t.pid, auto: true };
+      entry.rec = { agent: live, session: found.session, cwd: found.cwd, flags: carriedFlags(live, agent.argv), shell: t.pid, auto: true };
       entry.state = "running";
       entry.unrecorded = true;
       // Only Claude Code's can be remembered (`adopt`): false, with why, while
@@ -391,7 +475,7 @@ function describe(t, since, focus, fgSince = null) {
   // An agent running with nothing on record: the dialog still names it, and its folder.
   if (!entry.rec && live) entry.folder = t.foreground?.cwd ?? t.cwd ?? null;
   // Only the focused terminal's card offers Fork, so only it is checked.
-  if (entry.rec && entry.state === "running" && t.address === focus) entry.forkable = forkable(entry.rec, t.foreground?.pid);
+  if (entry.rec && entry.state === "running" && t.address === focus) entry.forkable = forkable(entry.rec, agent?.pid);
   return entry;
 }
 
@@ -401,7 +485,7 @@ async function list(args) {
   const pids = terminals.flatMap((t) => [t.pid, t.foreground?.pid]).filter(Boolean);
   const procs = pids.length ? await processes([...new Set(pids)]) : new Map();
   const since = (pid) => (pid ? procs.get(pid)?.since ?? null : null);
-  const entries = terminals.map((t) => describe(t, since(t.pid), focus, since(t.foreground?.pid))).filter((e) => e.rec || e.address === focus);
+  const entries = terminals.map((t) => describe(t, since(t.pid), focus, procs)).filter((e) => e.rec || e.address === focus);
   // The setup only changes on install; the dialog asks for it when it opens and after.
   const out = { entries };
   if (args.includes("--setup")) out.setup = doctorReport();
@@ -413,14 +497,21 @@ async function resume(args) {
   const terminal = await getTerminal(t);
   const rec = loadRecord(terminal.labels);
   if (!rec) throw new Error(`${t} has no remembered session.`);
-  if (liveAgent(terminal) === rec.agent) throw new Error(`${AGENTS[rec.agent].name} is already running in ${t}.`);
-  const fg = terminal.foreground;
-  if (fg?.pid && terminal.pid && fg.pid !== terminal.pid) {
-    // A wrapper's child shell is the terminal's shell too, just as in check.
-    // An unrelated shell or any other foreground program is still busy.
-    if (!idleWrappedShell(await processes(), fg, terminal.pid)) throw new Error(`${t} is busy with ${fg.argv?.[0] ?? "another program"}. Quit it first.`);
+  if (WIN) {
+    const table = await processes();
+    if (liveAgent(terminal, table) === rec.agent) throw new Error(`${AGENTS[rec.agent].name} is already running in ${t}.`);
+    const busy = busyWith(terminal, table);
+    if (busy) throw new Error(`${t} is busy with ${busy}. Quit it first.`);
+  } else {
+    if (liveAgent(terminal) === rec.agent) throw new Error(`${AGENTS[rec.agent].name} is already running in ${t}.`);
+    const fg = terminal.foreground;
+    if (fg?.pid && terminal.pid && fg.pid !== terminal.pid) {
+      // A wrapper's child shell is the terminal's shell too, just as in check.
+      // An unrelated shell or any other foreground program is still busy.
+      if (!idleWrappedShell(await processes(), fg, terminal.pid)) throw new Error(`${t} is busy with ${fg.argv?.[0] ?? "another program"}. Quit it first.`);
+    }
   }
-  const line = resumeLine(rec);
+  const line = WIN ? psResumeLine(rec) : resumeLine(rec);
   if (!line) throw new Error(`Can't build a resume command for ${t}.`);
   // Not sent without its folder (the agent would start elsewhere, with its
   // flags), nor without what it needs, and not forgotten: its sessions are
@@ -458,16 +549,17 @@ async function auto(args) {
  */
 function adoption(t, procs) {
   if (readRecord(t.labels)) return null;
-  const agent = liveAgent(t);
+  const proc = agentProc(t, procs);
+  const agent = proc?.key ?? null;
   if (!agent) return null;
-  const argv = t.foreground?.argv ?? [];
+  const argv = proc.argv ?? [];
   // `claude -p` typed in the terminal: it answers and quits, as for the hook.
   if (isOneShot(agent, argv)) return { agent, why: "a one-shot run, with no session to bring back" };
   // Only Claude Code's sessions/<pid>.json names its session for sure. The
   // others are found by the newest file in their folder's store, good enough
   // to show but not to keep as a record.
   if (agent !== "claude") return { agent, why: "only a running Claude Code session can be remembered; start it again to record it" };
-  const found = runningSession(t, agent, procs.get(t.foreground?.pid)?.since);
+  const found = runningSession(t, agent, proc.pid, procs.get(proc.pid)?.since);
   if (!found || !validId(found.session)) return { agent, why: "Revive can't find its session from its files" };
   const { session, cwd } = found;
   if (found.why) return { agent, session, why: found.why };
@@ -581,8 +673,11 @@ export function engineWord(engine = ENGINE, home = homedir()) {
   const rest = home && engine.startsWith(`${home}/`) ? engine.slice(home.length) : null;
   return rest !== null && /^[A-Za-z0-9_@%+=:,./ -]+$/.test(rest) ? `"$HOME${rest}"` : shQuote(engine);
 }
-const HOOK_COMMAND = `node ${shQuote(ENGINE)} hook`;
-const PORTABLE_HOOK_COMMAND = `node ${engineWord()} hook`;
+// Windows: Claude Code may run a hook through cmd, PowerShell or Git Bash; a
+// double-quoted path with forward slashes reads the same in all three. `$HOME`
+// does not, so the portable form is the same path there.
+const HOOK_COMMAND = WIN ? `node "${ENGINE.replace(/\\/g, "/")}" hook` : `node ${shQuote(ENGINE)} hook`;
+const PORTABLE_HOOK_COMMAND = WIN ? HOOK_COMMAND : `node ${engineWord()} hook`;
 const hookCommand = (agent = null, portable = false) => {
   const base = portable ? PORTABLE_HOOK_COMMAND : HOOK_COMMAND;
   return agent ? `${base} --agent ${agent}` : base;
@@ -614,8 +709,9 @@ const cursorDir = () => agentDirs({ ...process.env, HOME: homedir() }).cursor;
  * cursor-agent installers put it. The Herdr app may run Revive with a shorter
  * PATH than the person's shell has, hence the fallback.
  */
-const hasCli = (bin) => [...(process.env.PATH ?? "").split(":").filter(Boolean), join(homedir(), ".local", "bin")]
-  .some((dir) => existsSync(join(dir, bin)));
+const CLI_EXTS = WIN ? ["", ".exe", ".cmd", ".bat", ".ps1"] : [""];
+const hasCli = (bin) => [...(process.env.PATH ?? "").split(delimiter).filter(Boolean), join(homedir(), ".local", "bin")]
+  .some((dir) => CLI_EXTS.some((ext) => existsSync(join(dir, bin + ext))));
 
 /**
  * On macOS herdr-core starts terminals as login shells (`zsh -l`, `bash -l`).
@@ -652,16 +748,79 @@ function zshDir() {
   zdotdir ||= homedir();
   return zdotdir;
 }
-const RC = { zsh: () => join(zshDir(), ".zshrc"), bash: () => bashRc() };
+/**
+ * Windows: the profile each PowerShell reads at start ($PROFILE, the current
+ * user's for the console host). Asked of PowerShell itself, since Documents
+ * may be redirected (OneDrive) or localized. null when that PowerShell isn't there.
+ */
+const psProfiles = {};
+function psProfile(exe) {
+  if (exe in psProfiles) return psProfiles[exe];
+  psProfiles[exe] = null;
+  try {
+    const out = execFileSync(exe, ["-NoProfile", "-NonInteractive", "-Command", "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $PROFILE"],
+      { encoding: "utf8", timeout: 10000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (isAbsolute(out)) psProfiles[exe] = out;
+  } catch { /* not installed */ }
+  return psProfiles[exe];
+}
+// Windows PowerShell 5.1 (powershell.exe) and PowerShell 7 (pwsh.exe): Herdr starts pwsh when there is one.
+const RC = WIN
+  ? { powershell: () => psProfile("powershell.exe"), pwsh: () => psProfile("pwsh.exe") }
+  : { zsh: () => join(zshDir(), ".zshrc"), bash: () => bashRc() };
 // Every file a block may be in, for uninstall.
-const ALL_RC = () => [RC.zsh(), ...BASH_LOGIN.map((f) => join(homedir(), f)), join(homedir(), ".bashrc")];
+const ALL_RC = () => (WIN ? Object.values(RC).map((rc) => rc()).filter(Boolean)
+  : [RC.zsh(), ...BASH_LOGIN.map((f) => join(homedir(), f)), join(homedir(), ".bashrc")]);
 const BEGIN = "# >>> herdr-revive >>>";
 const END = "# <<< herdr-revive <<<";
 const EVENTS = ["SessionStart", "SessionEnd"];
 
 const isOurs = (h) => typeof h?.command === "string" && h.command.includes("revive.mjs") && /\bhook\b/.test(h.command);
 
+/**
+ * The block for a PowerShell profile. Herdr starts a terminal as
+ * `powershell.exe -NoExit -Command …`, which reads the profile first, in the
+ * console, so the resume runs right there: there is no instant prompt to wait
+ * for, and an agent started from the prompt function would lose the console.
+ * ASCII only (see psQuote). Errors never stop the rest of the profile.
+ */
+export function psShellBlock(engine = ENGINE) {
+  const q = psQuote(engine);
+  return [
+    BEGIN,
+    "# Resume the coding agent a herdr terminal lost to a restart or reboot.",
+    "# $env:REVIVE_DEBUG = 1 says why it did or didn't.",
+    `if ($env:HC_TERMINAL_ID -and (Test-Path -LiteralPath ${q}) -and (Get-Command node -ErrorAction SilentlyContinue)) {`,
+    `  try {`,
+    `    $__revive_hc = if ($env:REVIVE_HC) { $env:REVIVE_HC } else { 'hc' }`,
+    `    $__revive_j = (& $__revive_hc get $env:HC_TERMINAL_ID --json 2>$null) -join ' '`,
+    // Two cheap tests before starting node: a session is remembered here, and
+    // this is the terminal's own shell (its pid), not one started inside it.
+    `    if ($__revive_j -notmatch '"revive\\.session"') {`,
+    `      if ($env:REVIVE_DEBUG) { [Console]::Error.WriteLine("revive: nothing remembered on $env:HC_TERMINAL_ID") }`,
+    `    } elseif ($__revive_j -notmatch ('"pid": ?' + $PID + '[,}]')) {`,
+    `      if ($env:REVIVE_DEBUG) { [Console]::Error.WriteLine("revive: not the terminal's own shell") }`,
+    `    } else {`,
+    `      $__revive_enc = [Console]::OutputEncoding`,
+    `      [Console]::OutputEncoding = [Text.Encoding]::UTF8`,
+    `      try {`,
+    `        if ($env:REVIVE_DEBUG) { $__revive = (& node ${q} check --shell $PID) -join [char]10 }`,
+    `        else { $__revive = (& node ${q} check --shell $PID 2>$null) -join [char]10 }`,
+    `      } finally { [Console]::OutputEncoding = $__revive_enc }`,
+    `      if ($__revive) { Invoke-Expression $__revive }`,
+    `    }`,
+    `  } catch {`,
+    `    if ($env:REVIVE_DEBUG) { [Console]::Error.WriteLine("revive: $_") }`,
+    `  } finally {`,
+    `    Remove-Variable __revive, __revive_j, __revive_hc, __revive_enc -ErrorAction SilentlyContinue`,
+    `  }`,
+    `}`,
+    END,
+  ].join("\n");
+}
+
 export function shellBlock(engine = ENGINE) {
+  if (WIN) return psShellBlock(engine);
   const q = shQuote(engine);
   return [
     BEGIN,
@@ -785,7 +944,7 @@ class InvalidJson extends Error {
   }
 }
 
-const tilde = (path) => (path.startsWith(`${homedir()}/`) ? `~${path.slice(homedir().length)}` : path);
+const tilde = (path) => (path.startsWith(`${homedir()}${sep}`) ? `~${path.slice(homedir().length)}` : path);
 
 /**
  * Writes a file atomically. The first time Revive changes it, the person's
@@ -793,13 +952,13 @@ const tilde = (path) => (path.startsWith(`${homedir()}/`) ? `~${path.slice(homed
  * A symlinked file (a dotfiles repository) is written where the link points,
  * so the link stays; the file keeps its permissions.
  */
-function save(path, text) {
+function save(path, text, encoding = "utf8") {
   let target = path;
   try { target = realpathSync(path); } catch { /* not there yet */ }
   mkdirSync(dirname(target), { recursive: true });
   let mode = null;
   if (existsSync(target)) {
-    if (readFileSync(target, "utf8") === text) return false;
+    if (readFileSync(target, encoding) === text) return false;
     mode = statSync(target).mode & 0o7777;
     const backup = `${path}.revive-backup`;
     if (!existsSync(backup)) copyFileSync(target, backup);
@@ -809,7 +968,7 @@ function save(path, text) {
   // file (API keys under `env`) must not sit world-readable until the chmod.
   // The chmod stays for bits the umask takes away (0664 under umask 077).
   rmSync(tmp, { force: true });
-  writeFileSync(tmp, text, mode !== null ? { mode } : undefined);
+  writeFileSync(tmp, text, mode !== null ? { mode, encoding } : { encoding });
   if (mode !== null) chmodSync(tmp, mode);
   renameSync(tmp, target);
   return true;
@@ -817,7 +976,27 @@ function save(path, text) {
 
 const readText = (path) => (existsSync(path) ? readFileSync(path, "utf8") : "");
 
+/**
+ * A PowerShell profile's encoding, so its bytes come back as they were: one
+ * with a UTF-16 BOM (5.1's Out-File writes those) is read as UTF-16; any other
+ * (UTF-8 with or without BOM, the system code page) byte for byte, since the
+ * block itself is ASCII.
+ */
+const rcEncoding = (path) => {
+  if (!WIN || !existsSync(path)) return "utf8";
+  const head = readFileSync(path).subarray(0, 2);
+  return head[0] === 0xff && head[1] === 0xfe ? "utf16le" : "latin1";
+};
+const readRc = (path) => (existsSync(path) ? readFileSync(path, rcEncoding(path)) : "");
+/** Puts the block in a shell's rc file (or takes it out), in the file's own encoding. */
+export const editRc = (path, remove = false) => save(path, withShellBlock(readRc(path), { remove }), rcEncoding(path));
+
 function shells(args) {
+  if (WIN) {
+    const picked = Object.keys(RC).filter((s) => args.includes(`--${s}`));
+    // By default every PowerShell that is there: Herdr picks pwsh when it can.
+    return (picked.length ? picked : Object.keys(RC)).filter((s) => RC[s]());
+  }
   const picked = ["zsh", "bash"].filter((s) => args.includes(`--${s}`));
   if (picked.length) return picked;
   const login = (process.env.SHELL ?? "").split("/").pop();
@@ -918,7 +1097,7 @@ async function install(args, remove = false) {
   if (!args.includes("--no-shell")) {
     for (const rc of remove ? ALL_RC() : shells(args).map((s) => RC[s]())) {
       if (remove && !existsSync(rc)) continue;
-      if (save(rc, withShellBlock(readText(rc), { remove }))) changed.push(rc);
+      if (editRc(rc, remove)) changed.push(rc);
     }
     // An earlier version put bash's block into another file (a login file,
     // on Linux): only one bash file keeps it.
@@ -996,7 +1175,7 @@ export function doctorReport() {
     engine: ENGINE,
     ...hooks,
     ...Object.fromEntries(EXTENSION_AGENTS.map((key) => [key, existsSync(EXTENSIONS[key].dir()) ? safe(() => isExtension(key, extensionPath(key))) : null])),
-    shell: Object.fromEntries(Object.entries(RC).map(([s, rc]) => [s, readText(rc()).includes(BEGIN)])),
+    shell: Object.fromEntries(Object.entries(RC).map(([s, rc]) => [s, Boolean(rc()) && readRc(rc()).includes(BEGIN)])),
   };
 }
 

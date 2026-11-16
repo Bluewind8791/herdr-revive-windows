@@ -10,7 +10,8 @@
 
 /** The installed version: the same as mod.json and package.json (test/version.test.js). */
 export const VERSION = "0.8.0";
-const CHECK = true;
+// Off in the Windows fork: its prompt would have an agent install upstream over this port.
+const CHECK = false;
 export const REPO = "dmazlum/herdr-revive";
 export const RELEASES = `https://github.com/${REPO}/releases`;
 export const PROMPT = `Update the Revive mod from github.com/${REPO} to its latest release`;
