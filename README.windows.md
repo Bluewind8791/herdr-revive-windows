@@ -25,12 +25,19 @@ profile 블록은 ASCII만 씁니다. 기존 profile의 인코딩(UTF-8 BOM, UTF
 Herdr 안의 PowerShell 터미널에서:
 
 ```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # Windows PowerShell 5.1이 $PROFILE을 읽게 함
 git clone https://github.com/Bluewind8791/herdr-revive-windows
 cd herdr-revive-windows
 Copy-Item -Recurse -Force .\mods\revive "$HOME\.config\herdr-app\mods\"
 herdr-app check "$HOME\.config\herdr-app\mods\revive"
 node "$HOME\.config\herdr-app\mods\revive\revive.mjs" install
 ```
+
+클라이언트 Windows에서 Windows PowerShell 5.1의 기본 실행 정책은 `Restricted`입니다. 이 정책에서는 `$PROFILE`이
+로드되지 않고(「이 시스템에서 스크립트를 실행할 수 없으므로 … profile.ps1 파일을 로드할 수 없습니다」), 자동 resume도 일어나지 않습니다.
+`AllSigned`도 서명 없는 profile을 로드하지 않습니다. PowerShell 7(pwsh)의 기본값은 `RemoteSigned`라 해당하지 않습니다.
+`install`과 `doctor`는 블록이 든 profile을 로드하지 못하는 PowerShell이 있으면 경고하고, `doctor`의 `executionPolicy`에 각 정책을 보여 줍니다.
+`install`은 실행 정책을 바꾸지 않습니다.
 
 `install`은 다음 파일을 고칩니다. 처음 고칠 때 원본을 `<파일>.revive-backup`으로 복사합니다.
 
@@ -65,7 +72,7 @@ $env:REVIVE_DEBUG = 1; powershell                                  # 왜 resume�
 
 이 PC(Windows 11, Herdr app 0.1.13, hc 0.1.18, Windows PowerShell 5.1, Claude Code 2.1.318)에서 확인했습니다.
 
-- `npm test`: Windows 전용 테스트 9개 (명령줄 분해, 경로 인식, PowerShell quoting과 파서 검사, profile 인코딩 보존)
+- `npm test`: Windows 전용 테스트 15개 (명령줄 분해, 경로 인식, PowerShell quoting과 파서 검사, profile 인코딩 보존, 실행 정책 확인)
 - 실제 터미널에서 `SessionStart` 기록, `SessionEnd`의 keep(`other`)과 forget(`prompt_input_exit`)
 - 테스트 터미널에서 profile 블록 실행: 자동 resume, 같은 shell에서는 반복하지 않음, 실패 표시, 실패 뒤 자동 재시도 안 함,
   대화창 Resume(`revive.mjs resume`)

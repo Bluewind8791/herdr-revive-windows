@@ -659,6 +659,7 @@ async function doctor() {
   let count = null;
   try { count = await unremembered(); } catch { /* no hc, or no core: unknown, said as null */ }
   process.stdout.write(JSON.stringify({ ...doctorReport(), unremembered: count }, null, 2) + "\n");
+  for (const line of policyWarnings()) process.stderr.write(`${line}\n`);
 }
 
 // ── install ─────────────────────────────────────────────────────────────────
@@ -752,21 +753,35 @@ function zshDir() {
  * Windows: the profile each PowerShell reads at start ($PROFILE, the current
  * user's for the console host). Asked of PowerShell itself, since Documents
  * may be redirected (OneDrive) or localized. null when that PowerShell isn't there.
+ * Its execution policy comes from the same call: under Restricted (Windows
+ * PowerShell's default on a client) or AllSigned it won't load the profile.
  */
-const psProfiles = {};
-function psProfile(exe) {
-  if (exe in psProfiles) return psProfiles[exe];
-  psProfiles[exe] = null;
+const psShells = {};
+function psShell(exe) {
+  if (exe in psShells) return psShells[exe];
+  psShells[exe] = null;
   try {
-    const out = execFileSync(exe, ["-NoProfile", "-NonInteractive", "-Command", "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $PROFILE"],
-      { encoding: "utf8", timeout: 10000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
-    if (isAbsolute(out)) psProfiles[exe] = out;
+    const [profile, policy] = execFileSync(exe, ["-NoProfile", "-NonInteractive", "-Command", "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $PROFILE; [string](Get-ExecutionPolicy)"],
+      { encoding: "utf8", timeout: 10000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim().split(/\r?\n/).map((s) => s.trim());
+    if (isAbsolute(profile)) psShells[exe] = { profile, policy: policy || null };
   } catch { /* not installed */ }
-  return psProfiles[exe];
+  return psShells[exe];
+}
+const psProfile = (exe) => psShell(exe)?.profile ?? null;
+const PS_EXE = { powershell: "powershell.exe", pwsh: "pwsh.exe" };
+export const blocksProfile = (policy) => policy === "Restricted" || policy === "AllSigned";
+/** One line per PowerShell that has the block but won't load its profile. */
+function policyWarnings() {
+  if (!WIN) return [];
+  return Object.values(PS_EXE).flatMap((exe) => {
+    const ps = psShell(exe);
+    if (!ps || !blocksProfile(ps.policy) || !readRc(ps.profile).includes(BEGIN)) return [];
+    return [`${exe} won't load ${ps.profile}: its execution policy is ${ps.policy}, so its terminals won't resume. Run in PowerShell: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`];
+  });
 }
 // Windows PowerShell 5.1 (powershell.exe) and PowerShell 7 (pwsh.exe): Herdr starts pwsh when there is one.
 const RC = WIN
-  ? { powershell: () => psProfile("powershell.exe"), pwsh: () => psProfile("pwsh.exe") }
+  ? { powershell: () => psProfile(PS_EXE.powershell), pwsh: () => psProfile(PS_EXE.pwsh) }
   : { zsh: () => join(zshDir(), ".zshrc"), bash: () => bashRc() };
 // Every file a block may be in, for uninstall.
 const ALL_RC = () => (WIN ? Object.values(RC).map((rc) => rc()).filter(Boolean)
@@ -1099,6 +1114,7 @@ async function install(args, remove = false) {
       if (remove && !existsSync(rc)) continue;
       if (editRc(rc, remove)) changed.push(rc);
     }
+    if (!remove) notes.push(...policyWarnings());
     // An earlier version put bash's block into another file (a login file,
     // on Linux): only one bash file keeps it.
     if (!remove && shells(args).includes("bash")) {
@@ -1176,6 +1192,8 @@ export function doctorReport() {
     ...hooks,
     ...Object.fromEntries(EXTENSION_AGENTS.map((key) => [key, existsSync(EXTENSIONS[key].dir()) ? safe(() => isExtension(key, extensionPath(key))) : null])),
     shell: Object.fromEntries(Object.entries(RC).map(([s, rc]) => [s, Boolean(rc()) && readRc(rc()).includes(BEGIN)])),
+    // Windows: each PowerShell's execution policy (null when it isn't there).
+    ...(WIN ? { executionPolicy: Object.fromEntries(Object.entries(PS_EXE).map(([s, exe]) => [s, psShell(exe)?.policy ?? null])) } : {}),
   };
 }
 

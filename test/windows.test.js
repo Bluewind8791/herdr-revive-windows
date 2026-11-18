@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentKey, hookOwner, hookPayload, psQuote, psResumeLine, psResumeScript } from "../mods/revive/lib/core.js";
-import { splitWinArgs, parseWinProcesses, psShellBlock, editRc } from "../mods/revive/revive.mjs";
+import { splitWinArgs, parseWinProcesses, psShellBlock, editRc, blocksProfile } from "../mods/revive/revive.mjs";
 
 const rec = (extra = {}) => ({
   agent: "claude", session: "4f1c2a9e-7b3d-4e8a-9c21-5d6e7f8a9b0c", cwd: "C:\\work\\proj",
@@ -156,4 +156,24 @@ test("Claude Code's start folder is read from a transcript with a Windows path",
     writeFileSync(join(projects, `${id}.jsonl`), `${JSON.stringify({ type: "user", cwd })}\n`);
     assert.deepEqual(claudeStartFolder({ dirs: { claude }, session: id, cwd }), { cwd });
   } finally { rmSync(claude, { recursive: true, force: true }); }
+});
+
+test("Restricted and AllSigned keep PowerShell from loading the profile", () => {
+  assert.equal(blocksProfile("Restricted"), true);
+  assert.equal(blocksProfile("AllSigned"), true);
+  for (const p of ["RemoteSigned", "Unrestricted", "Bypass", null]) assert.equal(blocksProfile(p), false, String(p));
+});
+
+test("doctor reports each PowerShell's execution policy", { skip: process.platform !== "win32" }, () => {
+  const home = mkdtempSync(join(tmpdir(), "revive-doctor-"));
+  try {
+    const env = {
+      ...process.env, USERPROFILE: home, HOME: home, CLAUDE_CONFIG_DIR: join(home, ".claude"), CODEX_HOME: join(home, ".codex"),
+      PI_CODING_AGENT_DIR: join(home, ".pi"), REVIVE_HC: join(home, "no-such-hc"),
+      // The process scope, which PowerShell reads from this variable, wins over the user's own setting.
+      PSExecutionPolicyPreference: "Restricted",
+    };
+    const out = JSON.parse(execFileSync("node", [join(import.meta.dirname, "..", "mods", "revive", "revive.mjs"), "doctor"], { env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+    assert.equal(out.executionPolicy.powershell, "Restricted");
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });
